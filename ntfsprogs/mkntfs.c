@@ -245,8 +245,9 @@ static void mkntfs_usage(void)
 	ntfs_log_info("\nUsage: %s [options] device [number-of-sectors]\n"
 "\n"
 "Basic options:\n"
-"    -f, --fast                      Perform a quick format\n"
-"    -Q, --quick                     Perform a quick format\n"
+"    -f, --fast                      Perform a quick format(default)\n"
+"    -Q, --quick                     Perform a quick format(default)\n"
+"    -u, --full                      Perform a full format\n"
 "    -L, --label STRING              Set the volume label\n"
 "    -C, --enable-compression        Enable compression on the volume\n"
 "    -I, --no-indexing               Disable indexing on the volume\n"
@@ -586,6 +587,9 @@ static void mkntfs_init_options(struct mkntfs_options *opts2)
 	opts2->part_start_sect		= -1;
 	opts2->sector_size		= -1;
 	opts2->sectors_per_track	= -1;
+
+	/* quick format by default */
+	opts2->quick_format		= TRUE;
 }
 
 /**
@@ -616,6 +620,7 @@ static int mkntfs_parse_options(int argc, char *argv[], struct mkntfs_options *o
 		{ "verbose",		no_argument,		NULL, 'v' },
 		{ "version",		no_argument,		NULL, 'V' },
 		{ "zero-time",		no_argument,		NULL, 'T' },
+		{ "full",		no_argument,		NULL, 'u' },
 		{ NULL, 0, NULL, 0 }
 	};
 
@@ -705,6 +710,9 @@ static int mkntfs_parse_options(int argc, char *argv[], struct mkntfs_options *o
 			break;
 		case 'T':
 			opts2->use_epoch_time = TRUE;
+			break;
+		case 'u':
+			opts2->quick_format = FALSE;
 			break;
 		case 'U':
 			opts2->with_uuid = TRUE;
