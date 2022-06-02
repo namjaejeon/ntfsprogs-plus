@@ -16,11 +16,11 @@ if ENABLE_NTFSPROGS
 
 bin_PROGRAMS		= ntfsfix ntfsinfo ntfscluster ntfsls ntfscat ntfscmp
 sbin_PROGRAMS		= mkntfs ntfslabel ntfsundelete ntfsresize ntfsclone \
-			  ntfscp
+			  ntfscp ntfsck
 EXTRA_PROGRAM_NAMES	= ntfswipe ntfstruncate ntfsrecover \
 			  ntfsusermap ntfssecaudit
 
-QUARANTINED_PROGRAM_NAMES = ntfsdump_logfile ntfsmftalloc ntfsmove ntfsck \
+QUARANTINED_PROGRAM_NAMES = ntfsdump_logfile ntfsmftalloc ntfsmove \
 			   ntfsfallocate
 
 man_MANS		= mkntfs.8 ntfsfix.8 ntfslabel.8 ntfsinfo.8 \
@@ -167,6 +167,7 @@ if ENABLE_MOUNT_HELPER
 install-exec-hook:
 	$(INSTALL) -d $(DESTDIR)/$(sbindir)
 	$(LN_S) -f $(sbindir)/mkntfs $(DESTDIR)$(sbindir)/mkfs.ntfs
+	$(LN_S) -f $(sbindir)/ntfsck $(DESTDIR)$(sbindir)/fsck.ntfs
 
 install-data-hook:
 	$(INSTALL) -d $(DESTDIR)$(man8dir)
@@ -174,6 +175,7 @@ install-data-hook:
 
 uninstall-local:
 	$(RM) -f $(DESTDIR)/sbin/mkfs.ntfs
+	$(RM) -f $(DESTDIR)/sbin/fsck.ntfs
 	$(RM) -f $(DESTDIR)$(man8dir)/mkfs.ntfs.8
 endif
 
