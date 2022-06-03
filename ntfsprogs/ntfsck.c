@@ -864,6 +864,7 @@ int main(int argc, char **argv)
 	ntfs_volume *vol;
 	const char *name;
 	int ret, c;
+	unsigned long mnt_flags;
 
 	ntfs_log_set_handler(ntfs_log_handler_outerr);
 	if (argc == 1 || argc > 3) {
@@ -875,8 +876,6 @@ int main(int argc, char **argv)
 		name = argv[1];
 	else
 		name = argv[2];
-
-	//ntfs_log_set_levels(NTFS_LOG_LEVEL_DEBUG | NTFS_LOG_LEVEL_TRACE | NTFS_LOG_LEVEL_QUIET | NTFS_LOG_LEVEL_INFO | NTFS_LOG_LEVEL_VERBOSE | NTFS_LOG_LEVEL_PROGRESS);
 
 	option.flags = NTFSCK_ASK_REPAIR;
 	while ((c = getopt_long(argc, argv, "anhV", opts, NULL)) != EOF) {
@@ -900,6 +899,24 @@ int main(int argc, char **argv)
 			usage(1);
 		}
 	}
+
+	if (!ntfs_check_if_mounted(name, &mnt_flags)) {
+		if ((mnt_flags & NTFS_MF_MOUNTED)) {
+			if (!(mnt_flags & NTFS_MF_READONLY)) {
+				ntfs_log_error("Refusing to operate on read-write mounted device %s.\n",
+						name);
+				exit(1);
+			}
+
+			if (option.flags != NTFSCK_NO_REPAIR) {
+				ntfs_log_error("Refusing to change filesystem on read mounted device %s.\n",
+						name);
+				exit(1);
+			}
+		}
+	} else
+		ntfs_log_perror("Failed to determine whether %s is mounted",
+				name);
 
 	/* Allocate an ntfs_device structure. */
 	dev = ntfs_device_alloc(name, 0, &ntfs_device_default_io_ops, NULL);
