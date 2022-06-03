@@ -42,6 +42,7 @@
 #include <endians.h>
 #include <bootsect.h>
 #include <misc.h>
+#include <getopt.h>
 
 #include "cluster.h"
 #include "utils.h"
@@ -111,6 +112,51 @@
  *	SIGUSR1	: start displaying progress bar
  *	SIGUSR2	: stop displaying progress bar.
  */
+
+enum {
+	NTFSCK_ASK_REPAIR = 0,
+	NTFSCK_AUTO_REPAIR,
+	NTFSCK_NO_REPAIR,
+};
+
+static struct {
+	int flags;
+} option;
+
+
+/**
+ * usage
+ */
+__attribute__((noreturn))
+static void usage(int ret)
+{
+	ntfs_log_info("ntfsck v%s (libntfs-3g)\n\n"
+		      "Usage: ntfsck [options] device\n"
+		      "-a, --auto		auto-repair. no questions.\n"
+		      "-n, --just_check	just check and make no changes\n"
+		      "-v, --verbose		verbose.\n"
+		      "-V, --version		version.\n\n"
+		      "For example: ntfsck /dev/sda1\n\n", VERSION);
+	exit(ret);
+}
+
+/**
+ * version
+ */
+__attribute__((noreturn))
+static void version(void)
+{
+	ntfs_log_info("ntfsck v%s\n\n", VERSION);
+	ntfs_log_info("%s\n%s%s", ntfs_gpl, ntfs_bugs, ntfs_home);
+	exit(0);
+}
+
+static const struct option opts[] = {
+	{"auto",		no_argument,		NULL,	'a' },
+	{"just_check",		no_argument,		NULL,	'n' },
+	{"version",		no_argument,		NULL,	'V' },
+	{NULL,			0,			NULL,	 0  }
+};
 
 /* Assuming NO_NTFS_DEVICE_DEFAULT_IO_OPS is not set */
 
@@ -817,14 +863,43 @@ int main(int argc, char **argv)
 	ntfs_volume rawvol;
 	ntfs_volume *vol;
 	const char *name;
-	int ret;
-
-	if (argc != 2)
-		return RETURN_USAGE_OR_SYNTAX_ERROR;
-	name = argv[1];
+	int ret, c;
 
 	ntfs_log_set_handler(ntfs_log_handler_outerr);
+	if (argc == 1 || argc > 3) {
+		usage(1);
+		return RETURN_USAGE_OR_SYNTAX_ERROR;
+	}
+
+	if (argc == 2)
+		name = argv[1];
+	else
+		name = argv[2];
+
 	//ntfs_log_set_levels(NTFS_LOG_LEVEL_DEBUG | NTFS_LOG_LEVEL_TRACE | NTFS_LOG_LEVEL_QUIET | NTFS_LOG_LEVEL_INFO | NTFS_LOG_LEVEL_VERBOSE | NTFS_LOG_LEVEL_PROGRESS);
+
+	option.flags = NTFSCK_ASK_REPAIR;
+	while ((c = getopt_long(argc, argv, "anhV", opts, NULL)) != EOF) {
+		switch (c) {
+		case 'a':
+			option.flags = NTFSCK_AUTO_REPAIR;
+			break;
+		case 'n':
+			option.flags = NTFSCK_NO_REPAIR;
+			break;
+		case 'h':
+			usage(0);
+		case '?':
+			usage(1);
+			break;
+		case 'V':
+			version();
+			break;
+		default:
+			ntfs_log_info("ERROR: Unknown option '%s'.\n", argv[optind - 1]);
+			usage(1);
+		}
+	}
 
 	/* Allocate an ntfs_device structure. */
 	dev = ntfs_device_alloc(name, 0, &ntfs_device_default_io_ops, NULL);
