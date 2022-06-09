@@ -922,7 +922,8 @@ int main(int argc, char **argv)
 	dev = ntfs_device_alloc(name, 0, &ntfs_device_default_io_ops, NULL);
 	if (!dev)
 		return RETURN_OPERATIONAL_ERROR;
-	if (dev->d_ops->open(dev, O_RDONLY)) { //O_RDWR/O_RDONLY?
+
+	if (dev->d_ops->open(dev, O_RDWR)) {
 		ntfs_log_perror("Error opening partition device");
 		ntfs_device_free(dev);
 		return RETURN_OPERATIONAL_ERROR;
@@ -943,7 +944,8 @@ int main(int argc, char **argv)
 	// at this point we know that the volume is valid enough for mounting.
 
 	/* Call ntfs_device_mount() to do the actual mount. */
-	vol = ntfs_device_mount(dev, NTFS_MNT_RDONLY);
+	vol = ntfs_device_mount(dev,
+			option.flags == NTFSCK_NO_REPAIR ? NTFS_MNT_RDONLY : 0);
 	if (!vol) {
 		ntfs_device_free(dev);
 		return 2;
