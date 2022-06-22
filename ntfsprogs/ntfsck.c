@@ -623,9 +623,8 @@ static ATTR_REC *check_attr_record(ATTR_REC *attr_rec, MFT_RECORD *mft_rec,
 			goto check_attr_record_next_attr;
 		}
 
-		// todo: name comes before mapping pairs, and after the header.
-		if (attr_rec->name_offset + attr_rec->name_length <
-				attr_rec->mapping_pairs_offset) {
+		if (attr_rec->name_length && (attr_rec->name_offset >=
+				attr_rec->mapping_pairs_offset)) {
 			check_failed("name comes before mapping pairs.\n");
 			goto check_attr_record_next_attr;
 		}
