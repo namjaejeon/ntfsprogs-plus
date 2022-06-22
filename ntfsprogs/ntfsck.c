@@ -976,7 +976,7 @@ static void check_volume(ntfs_volume *vol)
 			vol->mft_record_size_bits;
 	ntfs_log_info("Checking %lld MFT records.\n", (long long)nr_mft_records);
 
-	for (mft_num=FILE_first_user; mft_num < nr_mft_records; mft_num++) {
+	for (mft_num = 24; mft_num < nr_mft_records; mft_num++) {
 	 	verify_mft_record(vol, mft_num);
 	}
 
@@ -1013,13 +1013,16 @@ static int verify_system_mft_record(ntfs_volume *vol, s64 mft_num)
 	int is_used, ret;
 	s64 mft_offset;
 
-	ntfs_log_info("verify system files\n");
 	current_mft_record = mft_num;
 
 	is_used = mft_bitmap_get_bit(mft_num);
 	if (is_used < 0) {
 		ntfs_log_error("Error getting bit value for record %lld.\n",
 			(long long)mft_num);
+		return -1;
+	} else if (!is_used && (mft_num < 16 && mft_num > 23)) {
+		ntfs_log_verbose("Record %lld unused. Fixing or fail.\n",
+				(long long)mft_num);
 		return -1;
 	}
 
