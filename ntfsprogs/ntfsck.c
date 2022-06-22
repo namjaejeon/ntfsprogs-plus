@@ -166,6 +166,7 @@ static int errors = 0;
 
 //static s64 mft_offset, mftmirr_offset;
 static s64 current_mft_record;
+static s64 prev_mft_record;
 
 /**
  * This is just a preliminary volume.
@@ -738,7 +739,7 @@ check_attr_record_next_attr:
  *	0	Everything's cool.
  *	else	Consider this record as damaged.
  */
-static BOOL check_file_record(u8 *buffer, u16 buflen)
+static BOOL check_file_record(u8 *buffer, u16 buflen, s64 mft_num)
 {
 	u16 usa_count, usa_ofs, attrs_offset, usa;
 	u32 bytes_in_use, bytes_allocated, i;
@@ -751,7 +752,7 @@ static BOOL check_file_record(u8 *buffer, u16 buflen)
 				le32_to_cpu(mft_rec->magic), magic_FILE);
 		return 1;
 	}
-	// todo: records 16-23 must be filled in order.
+
 	// todo: what to do with magic_BAAD?
 
 	// check usa_count+offset to update seq <= attrs_offset <
@@ -792,12 +793,27 @@ static BOOL check_file_record(u8 *buffer, u16 buflen)
 		return 1;
 	}
 
-	// flag in_use must be on.
-	if (!(mft_rec->flags & MFT_RECORD_IN_USE)) {
+	if (mft_num >= 16 && mft_num <= 23) {
+		if (prev_mft_record != mft_num - 1) {
+			check_failed("records 16-23 must be filled in order. (prev : %ld, curr : %ld\n",
+					prev_mft_record, mft_num);
+			return 1;
+
+		}
+
+		if (mft_rec->flags & MFT_RECORD_IN_USE) {
+			check_failed("MFT_RECORD_IN_USE in flags MFT record 16 ~ 23 must be off (0x%x).\n",
+					(unsigned int)le16_to_cpu(mft_rec->flags));
+			return 1;
+		}
+		prev_mft_record = mft_num;
+	} else if (!(mft_rec->flags & MFT_RECORD_IN_USE)) {
+		// flag in_use must be on.
 		check_failed("MFT_RECORD_IN_USE in MFT record flags must be on (0x%x).\n",
 			(unsigned int)le16_to_cpu(mft_rec->flags));
 		return 1;
-	}
+	} else
+		prev_mft_record = mft_rec->mft_record_number;
 
 	// Remove update seq & check it.
 	usa = *(u16*)(buffer + usa_ofs); // The value that should be at the end of every sector.
@@ -883,7 +899,7 @@ static void verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		goto verify_mft_record_error;
 	}
 
-	check_file_record(buffer, vol->mft_record_size);
+	check_file_record(buffer, vol->mft_record_size, mft_num);
 	// todo: if offset to first attribute >= 0x30, number of mft record should match.
 	// todo: Match the "record is used" with the mft bitmap.
 	// todo: if this is not base, check that the parent is a base, and is in use, and pointing to this record.
@@ -1006,10 +1022,6 @@ static int verify_system_mft_record(ntfs_volume *vol, s64 mft_num)
 		ntfs_log_error("Error getting bit value for record %lld.\n",
 			(long long)mft_num);
 		return -1;
-	} else if (!is_used) {
-		ntfs_log_verbose("Record %lld unused. Fixing or fail.\n",
-				(long long)mft_num);
-		return -1;
 	}
 
 	buffer = ntfs_malloc(vol->mft_record_size);
@@ -1025,7 +1037,7 @@ static int verify_system_mft_record(ntfs_volume *vol, s64 mft_num)
 		goto verify_mft_record_error;
 	}
 
-	ret = check_file_record(buffer, vol->mft_record_size);
+	ret = check_file_record(buffer, vol->mft_record_size, mft_num);
 	if (ret)
 		goto verify_mft_record_error;
 	// todo: if offset to first attribute >= 0x30, number of mft record should match.
@@ -1055,7 +1067,7 @@ static void check_reserved_system_files(ntfs_volume *vol)
 
 	ntfs_log_info("check reserved system files\n");
 
-	for (mft_num = 0; mft_num <= FILE_Extend; mft_num++) {
+	for (mft_num = 0; mft_num <= 23; mft_num++) {
 		ret = verify_system_mft_record(vol, mft_num);
 		if (ret)
 			break;
