@@ -122,6 +122,7 @@ enum {
 };
 
 static struct {
+	int verbose;
 	int flags;
 } option;
 
@@ -156,6 +157,7 @@ static void version(void)
 static const struct option opts[] = {
 	{"auto",		no_argument,		NULL,	'a' },
 	{"just_check",		no_argument,		NULL,	'n' },
+	{"verbose",		no_argument,		NULL,	'v' },
 	{"version",		no_argument,		NULL,	'V' },
 	{NULL,			0,			NULL,	 0  }
 };
@@ -548,6 +550,7 @@ static ATTR_REC *check_attr_record(ATTR_REC *attr_rec, MFT_RECORD *mft_rec,
 		return NULL;
 	}
 
+	ntfs_log_verbose("Attribute type : %x\n", attr_type);
 	// Attr type must be a multiple of 0x10 and 0x10<=x<=0x100.
 	if ((attr_type & ~0x0F0) && (attr_type != 0x100)) {
 		check_failed("Unknown attribute type 0x%x.\n",
@@ -629,6 +632,11 @@ static ATTR_REC *check_attr_record(ATTR_REC *attr_rec, MFT_RECORD *mft_rec,
 			goto check_attr_record_next_attr;
 		}
 
+		if (option.verbose && attr_rec->name_length) {
+			ntfs_log_info("Attribute name : %s\n",
+					ntfs_attr_name_get((ntfschar *)((u8 *)attr_rec + attr_rec->name_offset),
+						attr_rec->name_length));
+		}
 		// todo: length==mapping_pairs_offset+length of compressed mapping pairs.
 		// todo: mapping_pairs_offset is 8-byte aligned.
 		if (attr_rec->mapping_pairs_offset & 0x7) {
@@ -697,6 +705,18 @@ static ATTR_REC *check_attr_record(ATTR_REC *attr_rec, MFT_RECORD *mft_rec,
 				check_failed("Named resident attribute "
 					"with value before name.\n");
 		}
+
+		if (option.verbose && attr_type == AT_FILE_NAME) {
+			FILE_NAME_ATTR *fn = NULL;
+
+			fn = (FILE_NAME_ATTR *)((u8*)attr_rec +
+                                le16_to_cpu(attr_rec->value_offset));
+
+			ntfs_log_info("MFT record name : %s\n",
+					ntfs_attr_name_get(fn->file_name, fn->file_name_length));
+
+		}
+
 		// if resident, length==value_length+value_offset
 		//assert_u32_equal(le32_to_cpu(attr_rec->value_length)+
 		//	value_offset, length,
@@ -1110,7 +1130,8 @@ int main(int argc, char **argv)
 		name = argv[2];
 
 	option.flags = NTFSCK_ASK_REPAIR;
-	while ((c = getopt_long(argc, argv, "anhV", opts, NULL)) != EOF) {
+	option.verbose = 0;
+	while ((c = getopt_long(argc, argv, "anhvV", opts, NULL)) != EOF) {
 		switch (c) {
 		case 'a':
 			option.flags = NTFSCK_AUTO_REPAIR;
@@ -1123,6 +1144,10 @@ int main(int argc, char **argv)
 		case '?':
 			usage(1);
 			break;
+		case 'v':
+			option.verbose = 1;
+                        ntfs_log_set_levels(NTFS_LOG_LEVEL_VERBOSE);
+                        break;
 		case 'V':
 			version();
 			break;
