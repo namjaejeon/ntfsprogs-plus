@@ -522,6 +522,76 @@ static int mft_bitmap_get_bit(s64 mft_no)
 	return ntfs_bit_get(mft_bitmap_buf, mft_no);
 }
 
+static int ntfsck_check_entries_index_root(MFT_RECORD *mft_rec, ATTR_REC *attr_rec)
+{
+	INDEX_ROOT *ir;
+	u32 index_block_size;
+	FILE_NAME_ATTR *fn;
+	MFT_REF mref;
+	INDEX_ENTRY *ie;
+	u8 *index_end;
+	u16 value_offset = le16_to_cpu(attr_rec->value_offset);
+
+	ir = (INDEX_ROOT *)((u8*)attr_rec + value_offset);
+
+	index_block_size = le32_to_cpu(ir->index_block_size);
+	if (index_block_size < NTFS_BLOCK_SIZE ||
+			index_block_size & (index_block_size - 1)) {
+		check_failed("Index block size %u is invalid.\n",
+				(unsigned)index_block_size);
+		goto out;
+	}
+
+	index_end = (u8 *)&ir->index + le32_to_cpu(ir->index.index_length);
+	/* The first index entry. */
+	ie = (INDEX_ENTRY *)((u8*)&ir->index +
+			le32_to_cpu(ir->index.entries_offset));
+	/*
+	 * Loop until we exceed valid memory (corruption case) or until we
+	 * reach the last entry or until filldir tells us it has had enough
+	 * or signals an error (both covered by the rc test).
+	 */
+	for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+		ntfs_log_verbose("In index root, offset %d.\n",
+				(int)((u8 *)ie - (u8 *)ir));
+		/* Bounds checks. */
+		if ((u8 *)ie < (u8 *)mft_rec ||
+				(u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end ||
+				(u8 *)ie + le16_to_cpu(ie->length) > index_end) {
+			goto out;
+		}
+		/* The last entry cannot contain a name. */
+		if (ie->ie_flags & INDEX_ENTRY_END)
+			return 0;
+
+		if (!le16_to_cpu(ie->length))
+			goto out;
+
+		if (ie->key_length &&
+				((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key)) >
+				 le16_to_cpu(ie->length))) {
+			check_failed("Overflow from index entry\n");
+			goto out;
+		} else if ((offsetof(INDEX_ENTRY, key.file_name.file_name) +
+			    ie->key.file_name.file_name_length * sizeof(ntfschar)) >
+			   le16_to_cpu(ie->length)) {
+		/*	check_failed("mft_num : %lu, File name overflow from index entry\n",
+					current_mft_record); */
+			goto out;
+		}
+
+		fn = &ie->key.file_name;
+		/* Skip root directory self reference entry. */
+		ntfs_log_verbose("mft_num : %lu, Parent : 0x%lx, Indexed file : 0x%lx, File attribute : 0x%x, filename : %s\n",
+				current_mft_record, MREF_LE(fn->parent_directory),
+				MREF_LE(ie->indexed_file), ie->key.file_name.file_attributes,
+				ntfs_attr_name_get(fn->file_name, fn->file_name_length));
+	}
+
+out:
+	return 1;
+}
+
 /**
  * @attr_rec: The attribute record to check
  * @mft_rec: The parent FILE record.
@@ -542,6 +612,7 @@ static ATTR_REC *check_attr_record(ATTR_REC *attr_rec, MFT_RECORD *mft_rec,
 	u16 attrs_offset = le16_to_cpu(mft_rec->attrs_offset);
 	u32 attr_type = le32_to_cpu(attr_rec->type);
 	u32 length = le32_to_cpu(attr_rec->length);
+	int err;
 
 	// Check that this attribute does not overflow the mft_record
 	if ((u8*)attr_rec + length >= ((u8*)mft_rec) + buflen) {
@@ -742,6 +813,13 @@ static ATTR_REC *check_attr_record(ATTR_REC *attr_rec, MFT_RECORD *mft_rec,
 
 		// todo: attribute must not be 0xa0 (not sure about 0xb0, 0xe0, 0xf0)
 		// todo: check content well-formness per attr_type.
+
+		if (attr_type == AT_INDEX_ROOT) {
+			err = ntfsck_check_entries_index_root(mft_rec, attr_rec);
+			if (err)
+				goto check_attr_record_next_attr;
+		}
+
 	}
 
 check_attr_record_next_attr:
