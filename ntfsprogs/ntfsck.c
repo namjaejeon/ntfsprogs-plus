@@ -1194,6 +1194,7 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	u8 *buffer;
 	int is_used;
+	int always_exist_sys_meta_num = vol->major_ver >= 3 ? 11 : 10;
 
 	current_mft_record = mft_num;
 
@@ -1203,7 +1204,7 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			(long long)mft_num);
 		return -1;
 	} else if (!is_used) {
-		if (mft_num < 16 && mft_num > 23) {
+		if (mft_num <= always_exist_sys_meta_num) {
 			ntfs_log_verbose("Record %lld unused. Fixing or fail about system files.\n",
 					(long long)mft_num);
 			errors++;
