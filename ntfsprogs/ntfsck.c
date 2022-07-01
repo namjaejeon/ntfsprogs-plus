@@ -591,6 +591,196 @@ out:
 	return 1;
 }
 
+ntfschar NTFS_INDEX_I30[5] = { const_cpu_to_le16('$'), const_cpu_to_le16('I'),
+	const_cpu_to_le16('3'), const_cpu_to_le16('0'),
+	const_cpu_to_le16('\0') };
+
+static int ntfsck_check_entries_index_allocation(ntfs_volume *vol,
+		ntfs_inode *inode)
+{
+	ntfs_attr *ia_na = NULL, *bmp_na = NULL;
+	s64 br, ia_pos, bmp_pos, ia_start;
+	ntfs_attr_search_ctx *ctx = NULL;
+	u8 *index_end, *bmp = NULL;
+	INDEX_ROOT *ir;
+	INDEX_ENTRY *ie;
+	INDEX_ALLOCATION *ia = NULL;
+	int bmp_buf_size, bmp_buf_pos;
+	u32 index_block_size;
+	u8 index_block_size_bits, index_vcn_size_bits;
+
+	ia_na = ntfs_attr_open(inode, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
+	if (!ia_na) {
+		check_failed("Failed to open index allocation attribute. Directory inode %lld is corrupt or bug\n",
+			(long long)inode->mft_no);
+		return -1;
+	}
+
+	ctx = ntfs_attr_get_search_ctx(inode, NULL);
+	if (!ctx)
+		goto err_out;
+
+	/* Find the index root attribute in the mft record. */
+	if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE,
+				0, NULL, 0, ctx)) {
+		check_failed("Index root attribute missing in directory inode %lld\n",
+				(unsigned long long)inode->mft_no);
+		goto err_out;
+	}
+	/* Get to the index root value. */
+	ir = (INDEX_ROOT *)((u8 *)ctx->attr +
+			le16_to_cpu(ctx->attr->value_offset));
+
+	index_block_size = le32_to_cpu(ir->index_block_size);
+	index_block_size_bits = ffs(index_block_size) - 1;
+
+	if (vol->cluster_size <= index_block_size)
+		index_vcn_size_bits = vol->cluster_size_bits;
+	else
+		index_vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
+
+	/* Allocate a buffer for the current index block. */
+	ia = ntfs_malloc(index_block_size);
+	if (!ia)
+		goto err_out;
+
+	bmp_na = ntfs_attr_open(inode, AT_BITMAP, NTFS_INDEX_I30, 4);
+	if (!bmp_na) {
+		check_failed("Failed to open index bitmap attribute\n");
+		goto err_out;
+	}
+
+	/* Get the offset into the index allocation attribute. */
+	ia_pos = 0;
+
+	bmp_pos = ia_pos >> index_block_size_bits;
+	if (bmp_pos >> 3 >= bmp_na->data_size) {
+		check_failed("Current index position exceeds index bitmap size.\n");
+		goto err_out;
+	}
+
+	bmp_buf_size = min(bmp_na->data_size - (bmp_pos >> 3), 4096);
+	bmp = ntfs_malloc(bmp_buf_size);
+	if (!bmp)
+		goto err_out;
+
+	br = ntfs_attr_pread(bmp_na, bmp_pos >> 3, bmp_buf_size, bmp);
+	if (br != bmp_buf_size) {
+		check_failed("Failed to read from index bitmap attribute\n");
+		goto err_out;
+	}
+
+	bmp_buf_pos = 0;
+	/* If the index block is not in use find the next one that is. */
+	while (!(bmp[bmp_buf_pos >> 3] & (1 << (bmp_buf_pos & 7)))) {
+find_next_index_buffer:
+		bmp_pos++;
+		bmp_buf_pos++;
+		/* If we have reached the end of the bitmap, we are done. */
+		if (bmp_pos >> 3 >= bmp_na->data_size)
+			goto EOD;
+		ia_pos = bmp_pos << index_block_size_bits;
+		if (bmp_buf_pos >> 3 < bmp_buf_size)
+			continue;
+		/* Read next chunk from the index bitmap. */
+		bmp_buf_pos = 0;
+		if ((bmp_pos >> 3) + bmp_buf_size > bmp_na->data_size)
+			bmp_buf_size = bmp_na->data_size - (bmp_pos >> 3);
+		br = ntfs_attr_pread(bmp_na, bmp_pos >> 3, bmp_buf_size, bmp);
+		if (br != bmp_buf_size) {
+			check_failed("Failed to read from index bitmap attribute\n");
+			goto err_out;
+		}
+	}
+
+	ntfs_log_verbose("Handling index block 0x%llx.\n", (long long)bmp_pos);
+
+	/* Read the index block starting at bmp_pos. */
+	br = ntfs_attr_mst_pread(ia_na, bmp_pos << index_block_size_bits, 1,
+			index_block_size, ia);
+	if (br != 1) {
+		check_failed("Failed to read index block\n");
+		goto err_out;
+	}
+
+	ia_start = ia_pos & ~(s64)(index_block_size - 1);
+	if (ntfs_index_block_inconsistent((INDEX_BLOCK *)ia, index_block_size,
+			ia_na->ni->mft_no, ia_start >> index_vcn_size_bits)) {
+		check_failed("ntfs_index_block_inconsistent failed\n");
+		goto err_out;
+	}
+	index_end = (u8 *)&ia->index + le32_to_cpu(ia->index.index_length);
+
+	/* The first index entry. */
+	ie = (INDEX_ENTRY *)((u8 *)&ia->index +
+			le32_to_cpu(ia->index.entries_offset));
+	/*
+	 * Loop until we exceed valid memory (corruption case) or until we
+	 * reach the last entry or until ntfs_filldir tells us it has had
+	 * enough or signals an error (both covered by the rc test).
+	 */
+	for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+		FILE_NAME_ATTR *fn;
+
+		ntfs_log_verbose("In index allocation, offset 0x%llx.\n",
+				(long long)ia_start + ((u8 *)ie - (u8 *)ia));
+		/* Bounds checks. */
+		if ((u8 *)ie < (u8 *)ia ||
+		    (u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end ||
+		    (u8 *)ie + le16_to_cpu(ie->length) > index_end) {
+			check_failed("Index entry out of bounds in directory inode %lld.\n",
+					(unsigned long long)inode->mft_no);
+			goto err_out;
+		}
+		/* The last entry cannot contain a name. */
+		if (ie->ie_flags & INDEX_ENTRY_END)
+			break;
+
+		if (!le16_to_cpu(ie->length)) {
+			check_failed("ie->length is zero\n");
+			goto err_out;
+		}
+
+		/* Skip index entry if continuing previous readdir. */
+		if (ia_pos - ia_start > (u8 *)ie - (u8 *)ia)
+			continue;
+
+		/* The file name must not overflow from the entry */
+		if (ntfs_index_entry_inconsistent(ie, COLLATION_FILE_NAME,
+					inode->mft_no)) {
+			check_failed("index entry is inconsistent\n");
+			goto err_out;
+		}
+
+		fn = &ie->key.file_name;
+		ntfs_log_verbose("mft_num : %lu, Parent : 0x%lx, Indexed file : 0x%lx, File attribute : 0x%x, filename : %s\n",
+			current_mft_record, MREF_LE(fn->parent_directory),
+			MREF_LE(ie->indexed_file), ie->key.file_name.file_attributes,
+			ntfs_attr_name_get(fn->file_name, fn->file_name_length));
+
+	}
+	goto find_next_index_buffer;
+EOD:
+	free(ia);
+	free(bmp);
+	if (bmp_na)
+		ntfs_attr_close(bmp_na);
+	if (ia_na)
+		ntfs_attr_close(ia_na);
+	return 0;
+err_out:
+	ntfs_log_verbose("failed.\n");
+	if (ctx)
+		ntfs_attr_put_search_ctx(ctx);
+	free(ia);
+	free(bmp);
+	if (bmp_na)
+		ntfs_attr_close(bmp_na);
+	if (ia_na)
+		ntfs_attr_close(ia_na);
+	return -1;
+}
+
 /**
  * @attr_rec: The attribute record to check
  * @mft_rec: The parent FILE record.
@@ -704,8 +894,9 @@ static ATTR_REC *check_attr_record(ntfs_volume *vol, ntfs_inode *inode,
 
 		if (option.verbose && attr_rec->name_length) {
 			ntfs_log_info("Attribute name : %s\n",
-					ntfs_attr_name_get((ntfschar *)((u8 *)attr_rec + attr_rec->name_offset),
-						attr_rec->name_length));
+				ntfs_attr_name_get((ntfschar *)((u8 *)attr_rec +
+								attr_rec->name_offset),
+								attr_rec->name_length));
 		}
 		// todo: length==mapping_pairs_offset+length of compressed mapping pairs.
 		// todo: mapping_pairs_offset is 8-byte aligned.
@@ -769,6 +960,10 @@ static ATTR_REC *check_attr_record(ntfs_volume *vol, ntfs_inode *inode,
 				check_failed("Attribute must not be 0x10, 0x30, 0x40, 0x60, 0x70, 0x90, 0xd0 in non-resident\n");
 				goto check_attr_record_next_attr;
 		}
+
+		if (attr_type == AT_INDEX_ALLOCATION)
+			if (ntfsck_check_entries_index_allocation(vol, inode))
+				goto check_attr_record_next_attr;
 
 		// load runlist
 		// vcn and lcn length check
