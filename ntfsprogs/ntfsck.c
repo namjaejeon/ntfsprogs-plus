@@ -527,7 +527,6 @@ static int ntfsck_check_entries_index_root(MFT_RECORD *mft_rec, ATTR_REC *attr_r
 	INDEX_ROOT *ir;
 	u32 index_block_size;
 	FILE_NAME_ATTR *fn;
-	MFT_REF mref;
 	INDEX_ENTRY *ie;
 	u8 *index_end;
 	u16 value_offset = le16_to_cpu(attr_rec->value_offset);
