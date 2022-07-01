@@ -758,6 +758,17 @@ static ATTR_REC *check_attr_record(ATTR_REC *attr_rec, MFT_RECORD *mft_rec,
 		// todo: if mft_no!=0 and compressed/sparse, allocated_size==initialized_size.
 		// todo: what about compressed_size if compressed?
 		// todo: attribute must not be 0x10, 0x30, 0x40, 0x60, 0x70, 0x90, 0xd0 (not sure about 0xb0, 0xe0, 0xf0)
+		switch (attr_type) {
+			case AT_STANDARD_INFORMATION:
+			case AT_FILE_NAME:
+			case AT_OBJECT_ID:
+			case AT_VOLUME_NAME:
+			case AT_VOLUME_INFORMATION:
+			case AT_INDEX_ROOT:
+			case AT_EA_INFORMATION:
+				check_failed("Attribute must not be 0x10, 0x30, 0x40, 0x60, 0x70, 0x90, 0xd0 in non-resident\n");
+				goto check_attr_record_next_attr;
+		}
 
 		// load runlist
 		// vcn and lcn length check
