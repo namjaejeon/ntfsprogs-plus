@@ -969,7 +969,7 @@ static void replay_log(ntfs_volume *vol __attribute__((unused)))
 	// todo: if logfile is clean, return success.
 }
 
-static void verify_mft_record(ntfs_volume *vol, s64 mft_num)
+static int verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	u8 *buffer;
 	int is_used;
@@ -980,10 +980,18 @@ static void verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	if (is_used < 0) {
 		ntfs_log_error("Error getting bit value for record %lld.\n",
 			(long long)mft_num);
+		return -1;
 	} else if (!is_used) {
+		if (mft_num < 16 && mft_num > 23) {
+			ntfs_log_verbose("Record %lld unused. Fixing or fail about system files.\n",
+					(long long)mft_num);
+			errors++;
+			return 0;
+		}
+
 		ntfs_log_verbose("Record %lld unused. Skipping.\n",
 				(long long)mft_num);
-		return;
+		return 0;
 	}
 
 	buffer = ntfs_malloc(vol->mft_record_size);
@@ -1007,12 +1015,13 @@ static void verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	//   todo: Order of attributes.
 	//   todo: make sure compression_unit is the same.
 
-	return;
+	return 0;
 verify_mft_record_error:
 
 	if (buffer)
 		free(buffer);
 	errors++;
+	return 0;
 }
 
 /**
@@ -1068,14 +1077,17 @@ static int verify_mft_preliminary(ntfs_volume *rawvol)
 static void check_volume(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
+	int err;
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
 			vol->mft_record_size_bits;
 	ntfs_log_info("Checking %lld MFT records.\n", (long long)nr_mft_records);
 
-	for (mft_num = 24; mft_num < nr_mft_records; mft_num++) {
-	 	verify_mft_record(vol, mft_num);
+	for (mft_num = 0; mft_num < nr_mft_records; mft_num++) {
+		err = verify_mft_record(vol, mft_num);
+		if (err)
+			break;
 	}
 
 	// todo: Check metadata files.
@@ -1103,83 +1115,6 @@ static int reset_dirty(ntfs_volume *vol)
 		return -1;
 	}
 	return 0;
-}
-
-static int verify_system_mft_record(ntfs_volume *vol, s64 mft_num)
-{
-	u8 *buffer;
-	int is_used, ret;
-	s64 mft_offset;
-
-	current_mft_record = mft_num;
-
-	is_used = mft_bitmap_get_bit(mft_num);
-	if (is_used < 0) {
-		ntfs_log_error("Error getting bit value for record %lld.\n",
-			(long long)mft_num);
-		return -1;
-	} else if (!is_used && (mft_num < 16 && mft_num > 23)) {
-		ntfs_log_verbose("Record %lld unused. Fixing or fail.\n",
-				(long long)mft_num);
-		return -1;
-	}
-
-	buffer = ntfs_malloc(vol->mft_record_size);
-	if (!buffer)
-		goto verify_mft_record_error;
-
-	mft_offset = vol->mft_lcn * vol->cluster_size;
-
-	ntfs_log_verbose("MFT record %lld\n", (long long)mft_num);
-	if (ntfs_pread(vol->dev, mft_offset + mft_num*vol->mft_record_size,
-				vol->mft_record_size, buffer) < 0) {
-		ntfs_log_perror("Couldn't read $MFT record %lld", (long long)mft_num);
-		goto verify_mft_record_error;
-	}
-
-	ret = check_file_record(buffer, vol->mft_record_size, mft_num);
-	if (ret)
-		goto verify_mft_record_error;
-	// todo: if offset to first attribute >= 0x30, number of mft record should match.
-	// todo: Match the "record is used" with the mft bitmap.
-	// todo: if this is not base, check that the parent is a base, and is in use, and pointing to this record.
-
-	// todo: if base record: for each extent record:
-	//   todo: verify_file_record
-	//   todo: hard link count should be the number of 0x30 attributes.
-	//   todo: Order of attributes.
-	//   todo: make sure compression_unit is the same.
-
-	free(buffer);
-	return 0;
-verify_mft_record_error:
-
-	if (buffer)
-		free(buffer);
-	errors++;
-	return -1;
-}
-
-static void check_reserved_system_files(ntfs_volume *vol)
-{
-	s64 mft_num;
-	int ret;
-
-	ntfs_log_info("check reserved system files\n");
-
-	for (mft_num = 0; mft_num <= 23; mft_num++) {
-		ret = verify_system_mft_record(vol, mft_num);
-		if (ret)
-			break;
-	}
-
-	// todo: Check metadata files.
-
-	// todo: Second pass on mft records. Now check the contents as well.
-	// todo: When going through runlists, build a bitmap.
-
-	// todo: cluster accounting.
-	return;
 }
 
 /**
@@ -1273,7 +1208,6 @@ int main(int argc, char **argv)
 	ntfs_log_verbose("Boot sector verification complete. Proceeding to $MFT");
 
 	verify_mft_preliminary(&rawvol);
-	check_reserved_system_files(&rawvol);
 
 	/* ntfs_device_mount() expects the device to be closed. */
 	if (dev->d_ops->close(dev))
