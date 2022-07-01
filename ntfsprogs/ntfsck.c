@@ -604,8 +604,8 @@ out:
  *
  * Assumes mft_rec is current_mft_record.
  */
-static ATTR_REC *check_attr_record(ATTR_REC *attr_rec, MFT_RECORD *mft_rec,
-			u16 buflen)
+static ATTR_REC *check_attr_record(ntfs_volume *vol, ntfs_inode *inode,
+		ATTR_REC *attr_rec, MFT_RECORD *mft_rec, u16 buflen)
 {
 	u16 name_offset;
 	u16 attrs_offset = le16_to_cpu(mft_rec->attrs_offset);
@@ -848,12 +848,15 @@ check_attr_record_next_attr:
  *	0	Everything's cool.
  *	else	Consider this record as damaged.
  */
-static BOOL check_file_record(u8 *buffer, u16 buflen, s64 mft_num)
+static BOOL check_file_record(ntfs_volume *vol, u8 *buffer, u16 buflen,
+		s64 mft_num)
 {
 	u16 usa_count, usa_ofs, attrs_offset, usa;
 	u32 bytes_in_use, bytes_allocated, i;
 	MFT_RECORD *mft_rec = (MFT_RECORD *)buffer;
 	ATTR_REC *attr_rec;
+	ntfs_inode *inode;
+	int ret = 1;
 
 	// check record magic
 	if (le32_to_cpu(mft_rec->magic) != le32_to_cpu(magic_FILE)) {
@@ -942,12 +945,19 @@ static BOOL check_file_record(u8 *buffer, u16 buflen, s64 mft_num)
 		*fixup = saved_val; // remove it.
 	}
 
+	inode = ntfs_inode_open(vol, mft_num);
+	if (!inode) {
+		ntfs_log_perror("ERROR: Couldn't open inode");
+		return 1;
+	}
+
 	attr_rec = (ATTR_REC *)(buffer + attrs_offset);
 	while ((u8*)attr_rec <= buffer + buflen - 4) {
 		// Check attribute record. (Only what is in the buffer)
 		if (attr_rec->type == AT_END) {
 			// Done.
-			return 0;
+			ret = 0;
+			goto close_inode;
 		}
 
 		if ((u8*)attr_rec > buffer + buflen - 8) {
@@ -955,15 +965,19 @@ static BOOL check_file_record(u8 *buffer, u16 buflen, s64 mft_num)
 			check_failed("Attribute 0x%x is not AT_END, yet no "
 					"room for the length field.\n",
 					(int)le32_to_cpu(attr_rec->type));
-			return 1;
+			goto close_inode;
 		}
 
-		attr_rec = check_attr_record(attr_rec, mft_rec, buflen);
+		attr_rec = check_attr_record(vol, inode, attr_rec, mft_rec,
+				buflen);
 		if (!attr_rec)
-			return 1;
+			goto close_inode;
 	}
+
+close_inode:
+	ntfs_inode_close(inode);
 	// If we got here, there was an overflow.
-	return 1;
+	return ret;
 	
 	// todo: an attribute should be at the offset to first attribute, and the offset should be inside the buffer. It should have the value of "next attribute id".
 	// todo: if base record, it should start with attribute 0x10.
@@ -1016,7 +1030,7 @@ static int verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		goto verify_mft_record_error;
 	}
 
-	check_file_record(buffer, vol->mft_record_size, mft_num);
+	check_file_record(vol, buffer, vol->mft_record_size, mft_num);
 	// todo: if offset to first attribute >= 0x30, number of mft record should match.
 	// todo: Match the "record is used" with the mft bitmap.
 	// todo: if this is not base, check that the parent is a base, and is in use, and pointing to this record.
