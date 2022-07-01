@@ -281,7 +281,7 @@ static int ntfsck_fix_boot_sector(ntfs_volume *vol, char *full_bs,
 /**
  * Return: 0 ok, 1 error.
  */
-static BOOL verify_boot_sector(ntfs_volume *rawvol)
+static BOOL ntfsck_verify_boot_sector(ntfs_volume *rawvol)
 {;
 	NTFS_BOOT_SECTOR *ntfs_boot;
 	s32 sector_size;
@@ -366,7 +366,7 @@ static BOOL verify_boot_sector(ntfs_volume *rawvol)
  *
  * Assumes dev is open.
  */
-static runlist *load_runlist(ntfs_volume *rawvol, s64 offset_to_file_record, ATTR_TYPES attr_type, u32 size_of_file_record)
+static runlist *ntfsck_load_runlist(ntfs_volume *rawvol, s64 offset_to_file_record, ATTR_TYPES attr_type, u32 size_of_file_record)
 {
 	u8 *buf;
 	u16 attrs_offset;
@@ -449,7 +449,7 @@ static runlist *load_runlist(ntfs_volume *rawvol, s64 offset_to_file_record, ATT
  * Return: >=0 last VCN
  *	   LCN_EINVAL error.
  */
-static VCN get_last_vcn(runlist *rl)
+static VCN ntfsck_get_last_vcn(runlist *rl)
 {
 	VCN res;
 
@@ -478,12 +478,12 @@ static u8 *mft_bitmap_buf;
  * return: 0 ok.
  *	   RETURN_OPERATIONAL_ERROR on error.
  */
-static int mft_bitmap_load(ntfs_volume *rawvol)
+static int ntfsck_mft_bitmap_load(ntfs_volume *rawvol)
 {
 	VCN vcn;
 	u32 mft_bitmap_length;
 
-	vcn = get_last_vcn(mft_bitmap_rl);
+	vcn = ntfsck_get_last_vcn(mft_bitmap_rl);
 	if (vcn<=LCN_EINVAL) {
 		mft_bitmap_buf = NULL;
 		/* This case should not happen, not even with on-disk errors */
@@ -515,7 +515,7 @@ error:
  *
  * Assumes mft_bitmap_rl was initialized.
  */
-static int mft_bitmap_get_bit(s64 mft_no)
+static int ntfsck_mft_bitmap_get_bit(s64 mft_no)
 {
 	if (mft_no>=mft_bitmap_records)
 		return -1;
@@ -794,7 +794,7 @@ err_out:
  *
  * Assumes mft_rec is current_mft_record.
  */
-static ATTR_REC *check_attr_record(ntfs_volume *vol, ntfs_inode *inode,
+static ATTR_REC *ntfsck_check_attr_record(ntfs_volume *vol, ntfs_inode *inode,
 		ATTR_REC *attr_rec, MFT_RECORD *mft_rec, u16 buflen)
 {
 	u16 name_offset;
@@ -1043,7 +1043,7 @@ check_attr_record_next_attr:
  *	0	Everything's cool.
  *	else	Consider this record as damaged.
  */
-static BOOL check_file_record(ntfs_volume *vol, u8 *buffer, u16 buflen,
+static BOOL ntfsck_check_file_record(ntfs_volume *vol, u8 *buffer, u16 buflen,
 		s64 mft_num)
 {
 	u16 usa_count, usa_ofs, attrs_offset, usa;
@@ -1163,7 +1163,7 @@ static BOOL check_file_record(ntfs_volume *vol, u8 *buffer, u16 buflen,
 			goto close_inode;
 		}
 
-		attr_rec = check_attr_record(vol, inode, attr_rec, mft_rec,
+		attr_rec = ntfsck_check_attr_record(vol, inode, attr_rec, mft_rec,
 				buflen);
 		if (!attr_rec)
 			goto close_inode;
@@ -1184,20 +1184,20 @@ close_inode:
 	return FALSE;
 }
 
-static void replay_log(ntfs_volume *vol __attribute__((unused)))
+static void ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 {
 	// At this time, only check that the log is fully replayed.
 	// todo: if logfile is clean, return success.
 }
 
-static int verify_mft_record(ntfs_volume *vol, s64 mft_num)
+static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	u8 *buffer;
 	int is_used;
 
 	current_mft_record = mft_num;
 
-	is_used = mft_bitmap_get_bit(mft_num);
+	is_used = ntfsck_mft_bitmap_get_bit(mft_num);
 	if (is_used < 0) {
 		ntfs_log_error("Error getting bit value for record %lld.\n",
 			(long long)mft_num);
@@ -1225,7 +1225,7 @@ static int verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		goto verify_mft_record_error;
 	}
 
-	check_file_record(vol, buffer, vol->mft_record_size, mft_num);
+	ntfsck_check_file_record(vol, buffer, vol->mft_record_size, mft_num);
 	// todo: if offset to first attribute >= 0x30, number of mft record should match.
 	// todo: Match the "record is used" with the mft bitmap.
 	// todo: if this is not base, check that the parent is a base, and is in use, and pointing to this record.
@@ -1251,7 +1251,7 @@ verify_mft_record_error:
  * It should not depend on other checks or we may have a circular dependancy.
  * Also, this loadng must be forgiving, unlike the comprehensive checks.
  */
-static int verify_mft_preliminary(ntfs_volume *rawvol)
+static int ntfsck_verify_mft_preliminary(ntfs_volume *rawvol)
 {
 	current_mft_record = 0;
 	s64 mft_offset, mftmirr_offset;
@@ -1262,10 +1262,10 @@ static int verify_mft_preliminary(ntfs_volume *rawvol)
 	// Load the first segment of the $MFT/DATA runlist.
 	mft_offset = rawvol->mft_lcn * rawvol->cluster_size;
 	mftmirr_offset = rawvol->mftmirr_lcn * rawvol->cluster_size;
-	mft_rl = load_runlist(rawvol, mft_offset, AT_DATA, 1024);
+	mft_rl = ntfsck_load_runlist(rawvol, mft_offset, AT_DATA, 1024);
 	if (!mft_rl) {
 		check_failed("Loading $MFT runlist failed. Trying $MFTMirr.\n");
-		mft_rl = load_runlist(rawvol, mftmirr_offset, AT_DATA, 1024);
+		mft_rl = ntfsck_load_runlist(rawvol, mftmirr_offset, AT_DATA, 1024);
 	}
 	if (!mft_rl) {
 		check_failed("Loading $MFTMirr runlist failed too. Aborting.\n");
@@ -1277,10 +1277,10 @@ static int verify_mft_preliminary(ntfs_volume *rawvol)
 
 	// Load the runlist of $MFT/Bitmap.
 	// todo: what about ATTRIBUTE_LIST? Can we reuse code?
-	mft_bitmap_rl = load_runlist(rawvol, mft_offset, AT_BITMAP, 1024);
+	mft_bitmap_rl = ntfsck_load_runlist(rawvol, mft_offset, AT_BITMAP, 1024);
 	if (!mft_bitmap_rl) {
 		check_failed("Loading $MFT/Bitmap runlist failed. Trying $MFTMirr.\n");
-		mft_bitmap_rl = load_runlist(rawvol, mftmirr_offset, AT_BITMAP, 1024);
+		mft_bitmap_rl = ntfsck_load_runlist(rawvol, mftmirr_offset, AT_BITMAP, 1024);
 	}
 	if (!mft_bitmap_rl) {
 		check_failed("Loading $MFTMirr/Bitmap runlist failed too. Aborting.\n");
@@ -1289,13 +1289,13 @@ static int verify_mft_preliminary(ntfs_volume *rawvol)
 	}
 
 	/* Load $MFT/Bitmap */
-	if ((res = mft_bitmap_load(rawvol)))
+	if ((res = ntfsck_mft_bitmap_load(rawvol)))
 		return res;
 	return -1; /* FIXME: Just added to fix compiler warning without
 			thinking about what should be here.  (Yura) */
 }
 
-static void check_volume(ntfs_volume *vol)
+static void ntfsck_check_volume(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
 	int err;
@@ -1306,7 +1306,7 @@ static void check_volume(ntfs_volume *vol)
 	ntfs_log_info("Checking %lld MFT records.\n", (long long)nr_mft_records);
 
 	for (mft_num = 0; mft_num < nr_mft_records; mft_num++) {
-		err = verify_mft_record(vol, mft_num);
+		err = ntfsck_verify_mft_record(vol, mft_num);
 		if (err)
 			break;
 	}
@@ -1320,7 +1320,7 @@ static void check_volume(ntfs_volume *vol)
 	return;
 }
 
-static int reset_dirty(ntfs_volume *vol)
+static int ntfsck_reset_dirty(ntfs_volume *vol)
 {
 	le16 flags;
 
@@ -1421,14 +1421,14 @@ int main(int argc, char **argv)
 	}
 
 	rawvol.dev = dev;
-	ret = verify_boot_sector(&rawvol);
+	ret = ntfsck_verify_boot_sector(&rawvol);
 	if (ret) {
 		dev->d_ops->close(dev);
 		return ret;
 	}
 	ntfs_log_verbose("Boot sector verification complete. Proceeding to $MFT");
 
-	verify_mft_preliminary(&rawvol);
+	ntfsck_verify_mft_preliminary(&rawvol);
 
 	/* ntfs_device_mount() expects the device to be closed. */
 	if (dev->d_ops->close(dev))
@@ -1444,18 +1444,18 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
-	replay_log(vol);
+	ntfsck_replay_log(vol);
 
 	if (vol->flags & VOLUME_IS_DIRTY)
 		ntfs_log_warning("Volume is dirty.\n");
 
-	check_volume(vol);
+	ntfsck_check_volume(vol);
 
 	if (errors)
 		ntfs_log_info("Errors found.\n");
 
 	if (!errors) {
-		reset_dirty(vol);
+		ntfsck_reset_dirty(vol);
 	}
 
 	ntfs_umount(vol, FALSE);
