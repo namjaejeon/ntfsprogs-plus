@@ -812,6 +812,8 @@ static ATTR_REC *check_attr_record(ATTR_REC *attr_rec, MFT_RECORD *mft_rec,
 		assert_u32_equal(attr_rec->reservedR, 0, "Resident Reserved");
 
 		// todo: attribute must not be 0xa0 (not sure about 0xb0, 0xe0, 0xf0)
+		if (attr_type == AT_INDEX_ALLOCATION)
+			check_failed("Index Allocation attribute can not be in resident entry\n");
 		// todo: check content well-formness per attr_type.
 
 		if (attr_type == AT_INDEX_ROOT) {
