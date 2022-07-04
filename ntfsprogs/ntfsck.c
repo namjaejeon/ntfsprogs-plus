@@ -1033,6 +1033,47 @@ check_attr_record_next_attr:
 	return (ATTR_REC *)(((u8 *)attr_rec) + length);
 }
 
+/*
+ * The sequence number for each of the system files is always equal to
+ * their mft record number and it is never modified.
+ */
+static int ntfsck_check_seq_num_sys_files(ntfs_volume *vol, MFT_RECORD *mft_rec,
+		s64 mft_num)
+{
+	int mft_rec_num = le32_to_cpu(mft_rec->mft_record_number);
+
+	if (mft_num == FILE_MFT && mft_rec_num != FILE_MFT)
+		goto err_out;
+	else if (mft_num == FILE_MFTMirr && mft_rec_num != FILE_MFTMirr)
+		goto err_out;
+	else if (mft_num == FILE_LogFile && mft_rec_num != FILE_LogFile)
+		goto err_out;
+	else if (mft_num == FILE_Volume && mft_rec_num != FILE_Volume)
+		goto err_out;
+	else if (mft_num == FILE_AttrDef && mft_rec_num != FILE_AttrDef)
+		goto err_out;
+	else if (mft_num == FILE_root && mft_rec_num != FILE_root)
+		goto err_out;
+	else if (mft_num == FILE_Bitmap && mft_rec_num != FILE_Bitmap)
+		goto err_out;
+	else if (mft_num == FILE_Boot && mft_rec_num != FILE_Boot)
+		goto err_out;
+	else if (mft_num == FILE_BadClus && mft_rec_num != FILE_BadClus)
+		goto err_out;
+	else if (mft_num == FILE_Secure && mft_rec_num != FILE_Secure)
+		goto err_out;
+	else if (mft_num == FILE_UpCase && mft_rec_num != FILE_UpCase)
+		goto err_out;
+	else if (vol->major_ver >= 3 && mft_num == FILE_Extend &&
+		 mft_rec_num != FILE_Extend)
+		goto err_out;
+
+	return 0;
+
+err_out:
+	return -1;
+}
+
 /**
  * All checks that can be satisfied only by data from the buffer.
  * No other [MFT records/metadata files] are required.
@@ -1097,6 +1138,11 @@ static BOOL ntfsck_check_file_record(ntfs_volume *vol, u8 *buffer, u16 buflen,
 	if (le16_to_cpu(mft_rec->flags) > 0xf) {
 		check_failed("Unknown MFT record flags (0x%x).\n",
 			(unsigned int)le16_to_cpu(mft_rec->flags));
+		return 1;
+	}
+
+	if (ntfsck_check_seq_num_sys_files(vol, mft_rec, mft_num)) {
+		check_failed("The sequence number(%lu) for each of the system file is not equal", mft_num);
 		return 1;
 	}
 
