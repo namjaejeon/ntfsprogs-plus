@@ -608,6 +608,9 @@ static int ntfsck_check_entries_index_allocation(ntfs_volume *vol,
 	int bmp_buf_size, bmp_buf_pos;
 	u32 index_block_size;
 	u8 index_block_size_bits, index_vcn_size_bits;
+	FILE_NAME_ATTR *fn;
+	u64 mft_no;
+	u64 parent_mft_no;
 
 	ia_na = ntfs_attr_open(inode, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
 	if (!ia_na) {
@@ -720,8 +723,6 @@ find_next_index_buffer:
 	 * enough or signals an error (both covered by the rc test).
 	 */
 	for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
-		FILE_NAME_ATTR *fn;
-
 		ntfs_log_verbose("In index allocation, offset 0x%llx.\n",
 				(long long)ia_start + ((u8 *)ie - (u8 *)ia));
 		/* Bounds checks. */
@@ -753,11 +754,18 @@ find_next_index_buffer:
 		}
 
 		fn = &ie->key.file_name;
+		mft_no = MREF_LE(ie->indexed_file);
+		parent_mft_no = MREF_LE(fn->parent_directory);
 		ntfs_log_verbose("mft_num : %lu, Parent : 0x%lx, Indexed file : 0x%lx, File attribute : 0x%x, filename : %s\n",
-			current_mft_record, MREF_LE(fn->parent_directory),
-			MREF_LE(ie->indexed_file), ie->key.file_name.file_attributes,
+			current_mft_record, parent_mft_no,
+			mft_no, ie->key.file_name.file_attributes,
 			ntfs_attr_name_get(fn->file_name, fn->file_name_length));
 
+		if (!ntfsck_mft_bitmap_get_bit(mft_no))
+			check_failed("MFT Reference of the file is invalid");
+
+		if (!ntfsck_mft_bitmap_get_bit(parent_mft_no))
+			check_failed("MFT File Reference of the parent is invalid\n");
 	}
 	goto find_next_index_buffer;
 EOD:
