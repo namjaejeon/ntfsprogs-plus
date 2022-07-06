@@ -1300,6 +1300,153 @@ verify_mft_record_error:
 	return 0;
 }
 
+static int ntfsck_recover_mft_entry(ntfs_volume *vol)
+{
+	s64 l, br;
+	unsigned char *m, *m2;
+	int i, ret = -1; /* failure */
+
+	ntfs_log_info("\nProcessing $MFT and $MFTMirr...\n");
+
+	/* Load data from $MFT and $MFTMirr and compare the contents. */
+	m = (u8 *)malloc(vol->mftmirr_size << vol->mft_record_size_bits);
+	if (!m) {
+		ntfs_log_perror("Failed to allocate memory\n");
+		return -1;
+	}
+	m2 = (u8 *)malloc(vol->mftmirr_size << vol->mft_record_size_bits);
+	if (!m2) {
+		ntfs_log_perror("Failed to allocate memory\n");
+		free(m);
+		return -1;
+	}
+
+	ntfs_log_info("Reading $MFT...\n");
+	l = ntfs_mst_pread(vol->dev, vol->mft_lcn << vol->cluster_size_bits,
+			vol->mftmirr_size, vol->mft_record_size, m);
+	if (l != vol->mftmirr_size) {
+		if (l != -1)
+			errno = EIO;
+		ntfs_log_perror("Failed to read $MFT\n");
+		goto error_exit;
+	}
+
+	ntfs_log_info("Reading $MFTMirr...\n");
+	l = ntfs_mst_pread(vol->dev, vol->mftmirr_lcn << vol->cluster_size_bits,
+			vol->mftmirr_size, vol->mft_record_size, m2);
+	if (l != vol->mftmirr_size) {
+		if (l != -1)
+			errno = EIO;
+		ntfs_log_perror("Failed to read $MFTMirr\n");
+		goto error_exit;
+	}
+
+	/*
+	 * FIXME: Need to actually check the $MFTMirr for being real. Otherwise
+	 * we might corrupt the partition if someone is experimenting with
+	 * software RAID and the $MFTMirr is not actually in the position we
+	 * expect it to be... )-:
+	 * FIXME: We should emit a warning it $MFTMirr is damaged and ask
+	 * user whether to recreate it from $MFT or whether to abort. - The
+	 * warning needs to include the danger of software RAID arrays.
+	 * Maybe we should go as far as to detect whether we are running on a
+	 * MD disk and if yes then bomb out right at the start of the program?
+	 */
+
+	ntfs_log_info("Comparing $MFTMirr to $MFT...\n");
+	/*
+	 * Since 2017, Windows 10 does not mirror to full $MFTMirr when
+	 * using big clusters, and some records may be found different.
+	 * Nevertheless chkdsk.exe mirrors it fully, so we do similarly.
+	 */
+	for (i = 0; i < vol->mftmirr_size; ++i) {
+		MFT_RECORD *mrec, *mrec2;
+		const char *ESTR[12] = { "$MFT", "$MFTMirr", "$LogFile",
+			"$Volume", "$AttrDef", "root directory", "$Bitmap",
+			"$Boot", "$BadClus", "$Secure", "$UpCase", "$Extend" };
+		const char *s;
+		BOOL use_mirr;
+
+		if (i < 12)
+			s = ESTR[i];
+		else if (i < 16)
+			s = "system file";
+		else
+			s = "mft record";
+
+		use_mirr = FALSE;
+		mrec = (MFT_RECORD *)(m + i * vol->mft_record_size);
+		if (mrec->flags & MFT_RECORD_IN_USE) {
+			if (ntfs_is_baad_record(mrec->magic)) {
+				ntfs_log_error("$MFT error: Incomplete multi "
+						"sector transfer detected in "
+						"%s.\nCannot handle this yet. "
+						")-:\n", s);
+				goto error_exit;
+			}
+			if (!ntfs_is_mft_record(mrec->magic)) {
+				ntfs_log_error("$MFT error: Invalid mft "
+						"record for %s.\nCannot "
+						"handle this yet. )-:\n", s);
+				goto error_exit;
+			}
+		}
+		mrec2 = (MFT_RECORD *)(m2 + i * vol->mft_record_size);
+		if (mrec2->flags & MFT_RECORD_IN_USE) {
+			if (ntfs_is_baad_record(mrec2->magic)) {
+				ntfs_log_error("$MFTMirr error: Incomplete "
+						"multi sector transfer "
+						"detected in %s.\n", s);
+				goto error_exit;
+			}
+			if (!ntfs_is_mft_record(mrec2->magic)) {
+				ntfs_log_error("$MFTMirr error: Invalid mft "
+						"record for %s.\n", s);
+				goto error_exit;
+			}
+			/* $MFT is corrupt but $MFTMirr is ok, use $MFTMirr. */
+			if (!(mrec->flags & MFT_RECORD_IN_USE) &&
+			    !ntfs_is_mft_record(mrec->magic))
+				use_mirr = TRUE;
+		}
+
+		if (memcmp(mrec, mrec2, ntfs_mft_record_get_data_size(mrec))) {
+			s64 pos;
+
+			ntfs_log_info("Correcting differences in $MFT%s "
+					"record %d...\n", use_mirr ? "" : "Mirr",
+					i);
+
+			pos = i * vol->mft_record_size;
+			br = ntfs_mst_pwrite(vol->dev,
+				(vol->mft_lcn << vol->cluster_size_bits) + pos,
+				1, vol->mft_record_size, use_mirr ? mrec2 : mrec);
+			if (br != 1) {
+				ntfs_log_perror("Error correcting $MFT%s\n",
+						use_mirr ? "" : "Mirr");
+				goto error_exit;
+			}
+
+			br = ntfs_mst_pwrite(vol->dev,
+				(vol->mftmirr_lcn << vol->cluster_size_bits) + pos,
+				1, vol->mft_record_size, use_mirr ? mrec2 : mrec);
+			if (br != 1) {
+				ntfs_log_perror("Error correcting $MFT%s\n",
+						use_mirr ? "" : "Mirr");
+				goto error_exit;
+			}
+		}
+	}
+
+	ntfs_log_info("Processing of $MFT and $MFTMirr completed "
+			"successfully.\n");
+	ret = 0;
+error_exit:
+	free(m);
+	free(m2);
+	return ret;
+}
+
 /**
  * This function serves as bootstraping for the more comprehensive checks.
  * It will load the MFT runlist and MFT/Bitmap runlist.
@@ -1310,7 +1457,7 @@ static int ntfsck_verify_mft_preliminary(ntfs_volume *rawvol)
 {
 	current_mft_record = 0;
 	s64 mft_offset, mftmirr_offset;
-	int res;
+	int res, err;
 
 	ntfs_log_trace("Entering verify_mft_preliminary().\n");
 	// todo: get size_of_file_record from boot sector
@@ -1326,6 +1473,11 @@ static int ntfsck_verify_mft_preliminary(ntfs_volume *rawvol)
 		check_failed("Loading $MFTMirr runlist failed too. Aborting.\n");
 		return RETURN_FS_ERRORS_LEFT_UNCORRECTED | RETURN_OPERATIONAL_ERROR;
 	}
+
+	err = ntfsck_recover_mft_entry(rawvol);
+	if (err)
+		return err;
+
 	// TODO: else { recover $MFT } // Use $MFTMirr to recover $MFT.
 	// todo: support loading the next runlist extents when ATTRIBUTE_LIST is used on $MFT.
 	// If attribute list: Gradually load mft runlist. (parse runlist from first file record, check all referenced file records, continue with the next file record). If no attribute list, just load it.
