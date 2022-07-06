@@ -1480,11 +1480,10 @@ int main(int argc, char **argv)
 	if (!dev)
 		return RETURN_OPERATIONAL_ERROR;
 
-	dev->repair_mode = (option.flags == NTFSCK_AUTO_REPAIR) ? TRUE : FALSE;
-
 	/* Call ntfs_device_mount() to do the actual mount. */
 	vol = ntfs_device_mount(dev,
-			option.flags == NTFSCK_NO_REPAIR ? NTFS_MNT_RDONLY : 0);
+			option.flags ==  NTFSCK_AUTO_REPAIR ?
+			NTFS_MNT_FS_REPAIR : NTFS_MNT_FS_JUST_CHECK | NTFS_MNT_RDONLY);
 	if (!vol) {
 		ntfs_log_error("ntfs_device_mount failed\n");
 		ntfs_device_free(dev);

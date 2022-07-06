@@ -66,6 +66,8 @@ enum {
 	NTFS_MNT_EXCLUSIVE              = 0x08000000,
 	NTFS_MNT_RECOVER                = 0x10000000,
 	NTFS_MNT_IGNORE_HIBERFILE       = 0x20000000,
+	NTFS_MNT_FS_JUST_CHECK		= 0x40000000,
+	NTFS_MNT_FS_REPAIR		= 0x80000000,
 };
 typedef unsigned long ntfs_mount_flags;
 
@@ -118,6 +120,8 @@ typedef enum {
 	NV_Compression,		/* 1: allow compression */
 	NV_NoFixupWarn,		/* 1: Do not log fixup errors */
 	NV_FreeSpaceKnown,	/* 1: The free space is now known */
+	NV_FsJustCheck,		/* 1: Volume is for fsck */
+	NV_FsRepair,		/* 1: Volume is for fsck */
 } ntfs_volume_state_bits;
 
 #define  test_nvol_flag(nv, flag)	 test_bit(NV_##flag, (nv)->state)
@@ -159,6 +163,14 @@ typedef enum {
 #define NVolFreeSpaceKnown(nv)		 test_nvol_flag(nv, FreeSpaceKnown)
 #define NVolSetFreeSpaceKnown(nv)	  set_nvol_flag(nv, FreeSpaceKnown)
 #define NVolClearFreeSpaceKnown(nv)	clear_nvol_flag(nv, FreeSpaceKnown)
+
+#define NVolFsJustCheck(nv)		test_nvol_flag(nv, FsJustCheck)
+#define NVolSetFsJustCheck(nv)		set_nvol_flag(nv, FsJustCheck)
+#define NVolClearFsJustCheck(nv)	clear_nvol_flag(nv, FsJustCheck)
+
+#define NVolFsRepair(nv)		test_nvol_flag(nv, FsRepair)
+#define NVolSetFsRepair(nv)		set_nvol_flag(nv, FsRepair)
+#define NVolClearFsRepair(nv)		clear_nvol_flag(nv, FsRepair)
 
 /*
  * NTFS version 1.1 and 1.2 are used by Windows NT4.

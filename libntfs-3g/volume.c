@@ -588,7 +588,7 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 	    (ntfs_boot_sector_parse(vol, ntfs_boot) < 0)) {
 		int res = 1;
 
-		if (vol->dev->repair_mode == TRUE) {
+		if (NVolFsRepair(vol)) {
 			s64 actual_sectors, shown_sectors;
 
 			actual_sectors = ntfs_device_size_get(dev, sector_size) - 1;
@@ -656,6 +656,11 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	vol = ntfs_volume_alloc();
 	if (!vol)
 		goto error_exit;
+
+	if (flags == NTFS_MNT_FS_REPAIR)
+		NVolSetFsRepair(vol);
+	else if (flags == NTFS_MNT_FS_JUST_CHECK)
+		NVolSetFsJustCheck(vol);
 	
 	/* Create the default upcase table. */
 	vol->upcase_len = ntfs_upcase_build_default(&vol->upcase);
@@ -1166,7 +1171,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		if ((record_size <= sizeof(MFT_RECORD))
 		    || (record_size > vol->mft_record_size)
 		    || memcmp(mrec, mrec2, record_size)) {
-			if (dev->repair_mode == TRUE) {
+			if (NVolFsRepair(vol)) {
 				ntfs_log_info("Correcting differences in $MFT%s "
 						"record %d...", use_mirr ? "" : "Mirr",
 						i);
