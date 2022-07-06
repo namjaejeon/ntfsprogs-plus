@@ -621,13 +621,6 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 		}
 	}
 
-	/* Now set the device block size to the sector size. */
-	if (ntfs_device_block_size_set(vol->dev, vol->sector_size))
-		ntfs_log_debug("Failed to set the device block size to the "
-				"sector size.  This may affect performance "
-				"but should be harmless otherwise.  Error: "
-				"%s\n", strerror(errno));
-
 	ntfs_log_verbose("Boot sector verification complete. Proceeding to $MFT");
 
 	// todo: if partition, query bios and match heads/tracks?
