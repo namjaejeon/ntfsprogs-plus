@@ -552,9 +552,6 @@ static int ntfsck_fix_boot_sector(ntfs_volume *vol, char *full_bs,
 	return res;
 }
 
-
-
-
 /**
  * Return: 0 ok, 1 error.
  */
