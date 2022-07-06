@@ -90,6 +90,7 @@ struct ntfs_device {
 						   heads or -1. */
 	int d_sectors_per_track;		/* Disk geometry: number of
 						   sectors per track or -1. */
+	BOOL repair_mode;
 };
 
 struct stat;

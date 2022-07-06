@@ -47,8 +47,6 @@
 #include "cluster.h"
 #include "utils.h"
 
-#define DEFAULT_SECTOR_SIZE 512
-
 #define RETURN_FS_ERRORS_CORRECTED (1)
 #define RETURN_SYSTEM_NEEDS_REBOOT (2)
 #define RETURN_FS_ERRORS_LEFT_UNCORRECTED (4)
@@ -209,144 +207,6 @@ static int assert_u32_noteq(u32 val, u32 wrong, const char *name)
 			(int)wrong);
 		return 1;
 	}
-	return 0;
-}
-
-/*
- *		Try an alternate boot sector and fix the real one
- *
- *	Only after successful checks is the boot sector rewritten.
- *
- *	The alternate boot sector is not rewritten, either because it
- *	was found correct, or because we truncated the file system
- *	and the last actual sector might be part of some file.
- *
- *	Returns 0 if successful
- */
-
-static int ntfsck_fix_boot_sector(ntfs_volume *vol, char *full_bs,
-		s64 read_sector, s64 fix_sectors, s32 sector_size)
-{
-	s64 br;
-	int res;
-	s64 got_sectors;
-	le16 sector_size_le;
-	NTFS_BOOT_SECTOR *bs;
-
-	res = -1;
-	br = ntfs_pread(vol->dev, read_sector*sector_size, sector_size, full_bs);
-	if (br != sector_size) {
-		if (br != -1)
-			errno = EINVAL;
-		if (!br)
-			ntfs_log_error("Failed to read alternate bootsector (size=0)\n");
-		else
-			ntfs_log_perror("Error reading alternate bootsector");
-	} else {
-		bs = (NTFS_BOOT_SECTOR *)full_bs;
-		got_sectors = sle64_to_cpu(bs->number_of_sectors);
-		bs->number_of_sectors = cpu_to_sle64(fix_sectors);
-		/* alignment problem on Sparc, even doing memcpy() */
-		sector_size_le = cpu_to_le16(sector_size);
-		if (!memcmp(&sector_size_le, &bs->bpb.bytes_per_sector, 2) &&
-		    ntfs_boot_sector_is_ntfs(bs) &&
-		    !ntfs_boot_sector_parse(vol, bs)) {
-			s64 bw;
-
-			ntfs_log_info("The alternate bootsector is usable\n");
-			if (fix_sectors != got_sectors)
-				ntfs_log_info("Set sector count to %lld instead of %lld\n",
-						(long long)fix_sectors,
-						(long long)got_sectors);
-			/* fix the normal boot sector */
-			ntfs_log_info("Rewriting the bootsector\n");
-			bw = ntfs_pwrite(vol->dev, 0, sector_size, full_bs);
-			if (bw == sector_size)
-				res = 0;
-			else {
-				if (bw != -1)
-					errno = EINVAL;
-				if (!bw)
-					ntfs_log_error("Failed to rewrite the bootsector (size=0)\n");
-				else
-					ntfs_log_perror("Error rewriting the bootsector");
-			}
-		}
-		if (!res)
-			ntfs_log_verbose("The boot sector has been rewritten\n");
-	}
-	return res;
-}
-
-/**
- * Return: 0 ok, 1 error.
- */
-static BOOL ntfsck_verify_boot_sector(ntfs_volume *rawvol)
-{;
-	NTFS_BOOT_SECTOR *ntfs_boot;
-	s32 sector_size;
-	struct ntfs_device *dev = rawvol->dev;
-
-	current_mft_record = 9;
-
-	sector_size = ntfs_device_sector_size_get(dev);
-	if (sector_size <= 0)
-		sector_size = DEFAULT_SECTOR_SIZE;
-
-	ntfs_boot = ntfs_malloc(sizeof(NTFS_BOOT_SECTOR));
-	if (!ntfs_boot)
-		return 1;
-
-	if (ntfs_pread(dev, 0, sector_size, ntfs_boot) != sector_size) {
-		check_failed("Failed to read boot sector.\n");
-		return 1;
-	}
-
-	if ((ntfs_boot->jump[0] != 0xeb) ||
-	    ((ntfs_boot->jump[1] != 0x52) && (ntfs_boot->jump[1] != 0x5b)) ||
-	    (ntfs_boot->jump[2] != 0x90)) {
-		check_failed("Boot sector: Bad jump.\n");
-		return 1;
-	}
-
-	if (!ntfs_boot_sector_is_ntfs(ntfs_boot) ||
-	    (ntfs_boot_sector_parse(rawvol, ntfs_boot) < 0)) {
-		int res = 1;
-
-		if (option.flags == NTFSCK_AUTO_REPAIR) {
-			s64 actual_sectors, shown_sectors;
-
-			actual_sectors = ntfs_device_size_get(dev, sector_size) - 1;
-			shown_sectors = sle64_to_cpu(ntfs_boot->number_of_sectors);
-			/* first try the actual last sector */
-			if ((actual_sectors > 0) &&
-			    !ntfsck_fix_boot_sector(rawvol, (char *)ntfs_boot, actual_sectors,
-						    actual_sectors, sector_size))
-				res = 0;
-
-			/* then try the shown last sector, if less than actual */
-			if (res && (shown_sectors > 0) &&
-			    (shown_sectors < actual_sectors) &&
-			    !ntfsck_fix_boot_sector(rawvol, (char *)ntfs_boot, shown_sectors,
-						    shown_sectors, sector_size))
-				res = 0;
-
-			/* then try reducing the number of sectors to actual value */
-			if (res && (shown_sectors > actual_sectors) &&
-			    !ntfsck_fix_boot_sector(rawvol, (char *)ntfs_boot, 0, actual_sectors,
-						    sector_size))
-				res = 0;
-			if (res) {
-				check_failed("Boot sector: failed to fix boot sector\n");
-				return res;
-			}
-		} else if (res) {
-			check_failed("Boot sector: invalid boot sector\n");
-			return 1;
-		}
-	}
-
-	// todo: if partition, query bios and match heads/tracks?
 	return 0;
 }
 
@@ -1553,10 +1413,9 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 int main(int argc, char **argv)
 {
 	struct ntfs_device *dev;
-	ntfs_volume rawvol;
 	ntfs_volume *vol;
 	const char *name;
-	int ret, c;
+	int c;
 	unsigned long mnt_flags;
 
 	ntfs_log_set_handler(ntfs_log_handler_outerr);
@@ -1621,32 +1480,13 @@ int main(int argc, char **argv)
 	if (!dev)
 		return RETURN_OPERATIONAL_ERROR;
 
-	if (dev->d_ops->open(dev, O_RDWR)) {
-		ntfs_log_perror("Error opening partition device");
-		ntfs_device_free(dev);
-		return RETURN_OPERATIONAL_ERROR;
-	}
-
-	rawvol.dev = dev;
-	ret = ntfsck_verify_boot_sector(&rawvol);
-	if (ret) {
-		dev->d_ops->close(dev);
-		return ret;
-	}
-	ntfs_log_verbose("Boot sector verification complete. Proceeding to $MFT");
-
-	ntfsck_verify_mft_preliminary(&rawvol);
-
-	/* ntfs_device_mount() expects the device to be closed. */
-	if (dev->d_ops->close(dev))
-		ntfs_log_perror("Failed to close the device.");
-
-	// at this point we know that the volume is valid enough for mounting.
+	dev->repair_mode = (option.flags == NTFSCK_AUTO_REPAIR) ? TRUE : FALSE;
 
 	/* Call ntfs_device_mount() to do the actual mount. */
 	vol = ntfs_device_mount(dev,
 			option.flags == NTFSCK_NO_REPAIR ? NTFS_MNT_RDONLY : 0);
 	if (!vol) {
+		ntfs_log_error("ntfs_device_mount failed\n");
 		ntfs_device_free(dev);
 		return 2;
 	}

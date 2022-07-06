@@ -486,6 +486,154 @@ error_exit:
 	return -1;
 }
 
+/*
+ *	Try an alternate boot sector and fix the real one
+ *
+ *	Only after successful checks is the boot sector rewritten.
+ *
+ *	The alternate boot sector is not rewritten, either because it
+ *	was found correct, or because we truncated the file system
+ *	and the last actual sector might be part of some file.
+ *
+ *	Returns 0 if successful
+ */
+
+static int ntfsck_fix_boot_sector(ntfs_volume *vol, char *full_bs,
+		s64 read_sector, s64 fix_sectors, s32 sector_size)
+{
+	s64 br;
+	int res;
+	s64 got_sectors;
+	le16 sector_size_le;
+	NTFS_BOOT_SECTOR *bs;
+
+	res = -1;
+	br = ntfs_pread(vol->dev, read_sector*sector_size, sector_size, full_bs);
+	if (br != sector_size) {
+		if (br != -1)
+			errno = EINVAL;
+		if (!br)
+			ntfs_log_error("Failed to read alternate bootsector (size=0)\n");
+		else
+			ntfs_log_perror("Error reading alternate bootsector");
+	} else {
+		bs = (NTFS_BOOT_SECTOR *)full_bs;
+		got_sectors = sle64_to_cpu(bs->number_of_sectors);
+		bs->number_of_sectors = cpu_to_sle64(fix_sectors);
+		/* alignment problem on Sparc, even doing memcpy() */
+		sector_size_le = cpu_to_le16(sector_size);
+		if (!memcmp(&sector_size_le, &bs->bpb.bytes_per_sector, 2) &&
+		    ntfs_boot_sector_is_ntfs(bs) &&
+		    !ntfs_boot_sector_parse(vol, bs)) {
+			s64 bw;
+
+			ntfs_log_info("The alternate bootsector is usable\n");
+			if (fix_sectors != got_sectors)
+				ntfs_log_info("Set sector count to %lld instead of %lld\n",
+						(long long)fix_sectors,
+						(long long)got_sectors);
+			/* fix the normal boot sector */
+			ntfs_log_info("Rewriting the bootsector\n");
+			bw = ntfs_pwrite(vol->dev, 0, sector_size, full_bs);
+			if (bw == sector_size)
+				res = 0;
+			else {
+				if (bw != -1)
+					errno = EINVAL;
+				if (!bw)
+					ntfs_log_error("Failed to rewrite the bootsector (size=0)\n");
+				else
+					ntfs_log_perror("Error rewriting the bootsector");
+			}
+		}
+		if (!res)
+			ntfs_log_verbose("The boot sector has been rewritten\n");
+	}
+	return res;
+}
+
+
+
+
+/**
+ * Return: 0 ok, 1 error.
+ */
+static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
+{;
+	NTFS_BOOT_SECTOR *ntfs_boot;
+	s32 sector_size;
+	struct ntfs_device *dev = vol->dev;
+
+	sector_size = ntfs_device_sector_size_get(dev);
+	if (sector_size <= 0)
+		sector_size = 512;
+
+	ntfs_boot = ntfs_malloc(sizeof(NTFS_BOOT_SECTOR));
+	if (!ntfs_boot)
+		return 1;
+
+	if (ntfs_pread(dev, 0, sector_size, ntfs_boot) != sector_size) {
+		ntfs_log_error("Failed to read boot sector.\n");
+		return 1;
+	}
+
+	if ((ntfs_boot->jump[0] != 0xeb) ||
+	    ((ntfs_boot->jump[1] != 0x52) && (ntfs_boot->jump[1] != 0x5b)) ||
+	    (ntfs_boot->jump[2] != 0x90)) {
+		ntfs_log_error("Boot sector: Bad jump.\n");
+		return 1;
+	}
+
+	if (!ntfs_boot_sector_is_ntfs(ntfs_boot) ||
+	    (ntfs_boot_sector_parse(vol, ntfs_boot) < 0)) {
+		int res = 1;
+
+		if (vol->dev->repair_mode == TRUE) {
+			s64 actual_sectors, shown_sectors;
+
+			actual_sectors = ntfs_device_size_get(dev, sector_size) - 1;
+			shown_sectors = sle64_to_cpu(ntfs_boot->number_of_sectors);
+			/* first try the actual last sector */
+			if ((actual_sectors > 0) &&
+			    !ntfsck_fix_boot_sector(vol, (char *)ntfs_boot, actual_sectors,
+						    actual_sectors, sector_size))
+				res = 0;
+
+			/* then try the shown last sector, if less than actual */
+			if (res && (shown_sectors > 0) &&
+			    (shown_sectors < actual_sectors) &&
+			    !ntfsck_fix_boot_sector(vol, (char *)ntfs_boot, shown_sectors,
+						    shown_sectors, sector_size))
+				res = 0;
+
+			/* then try reducing the number of sectors to actual value */
+			if (res && (shown_sectors > actual_sectors) &&
+			    !ntfsck_fix_boot_sector(vol, (char *)ntfs_boot, 0, actual_sectors,
+						    sector_size))
+				res = 0;
+			if (res) {
+				ntfs_log_error("Boot sector: failed to fix boot sector\n");
+				return res;
+			}
+		} else if (res) {
+			ntfs_log_error("Boot sector: invalid boot sector\n");
+			return 1;
+		}
+	}
+
+	/* Now set the device block size to the sector size. */
+	if (ntfs_device_block_size_set(vol->dev, vol->sector_size))
+		ntfs_log_debug("Failed to set the device block size to the "
+				"sector size.  This may affect performance "
+				"but should be harmless otherwise.  Error: "
+				"%s\n", strerror(errno));
+
+	ntfs_log_verbose("Boot sector verification complete. Proceeding to $MFT");
+
+	// todo: if partition, query bios and match heads/tracks?
+	return 0;
+}
+
 /**
  * ntfs_volume_startup - allocate and setup an ntfs volume
  * @dev:	device to open
@@ -502,9 +650,7 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 		ntfs_mount_flags flags)
 {
 	LCN mft_zone_size, mft_lcn;
-	s64 br;
 	ntfs_volume *vol;
-	NTFS_BOOT_SECTOR *bs;
 	int eo;
 
 	if (!dev || !dev->d_ops || !dev->d_name) {
@@ -513,10 +659,6 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 		return NULL;
 	}
 
-	bs = ntfs_malloc(sizeof(NTFS_BOOT_SECTOR));
-	if (!bs)
-		return NULL;
-	
 	/* Allocate the volume structure. */
 	vol = ntfs_volume_alloc();
 	if (!vol)
@@ -564,26 +706,10 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	/* Attach the device to the volume. */
 	vol->dev = dev;
 	
-	/* Now read the bootsector. */
-	br = ntfs_pread(dev, 0, sizeof(NTFS_BOOT_SECTOR), bs);
-	if (br != sizeof(NTFS_BOOT_SECTOR)) {
-		if (br != -1)
-			errno = EINVAL;
-		if (!br)
-			ntfs_log_error("Failed to read bootsector (size=0)\n");
-		else
-			ntfs_log_perror("Error reading bootsector");
+	if (ntfsck_verify_boot_sector(vol)) {
 		goto error_exit;
 	}
-	if (!ntfs_boot_sector_is_ntfs(bs)) {
-		errno = EINVAL;
-		goto error_exit;
-	}
-	if (ntfs_boot_sector_parse(vol, bs) < 0)
-		goto error_exit;
-	
-	free(bs);
-	bs = NULL;
+
 	/* Now set the device block size to the sector size. */
 	if (ntfs_device_block_size_set(vol->dev, vol->sector_size))
 		ntfs_log_debug("Failed to set the device block size to the "
@@ -662,7 +788,6 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	return vol;
 error_exit:
 	eo = errno;
-	free(bs);
 	if (vol)
 		__ntfs_volume_release(vol);
 	errno = eo;
@@ -937,7 +1062,7 @@ static int fix_txf_data(ntfs_volume *vol)
  */
 ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 {
-	s64 l;
+	s64 l, br;
 	ntfs_volume *vol;
 	u8 *m = NULL, *m2 = NULL;
 	ntfs_attr_search_ctx *ctx = NULL;
@@ -1001,6 +1126,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 			"$Volume", "$AttrDef", "root directory", "$Bitmap",
 			"$Boot", "$BadClus", "$Secure", "$UpCase", "$Extend" };
 		const char *s;
+		BOOL use_mirr;
 
 		if (i < 12)
 			s = ESTR[i];
@@ -1009,6 +1135,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		else
 			s = "mft record";
 
+		use_mirr = FALSE;
 		mrec = (MFT_RECORD*)(m + i * vol->mft_record_size);
 		if (mrec->flags & MFT_RECORD_IN_USE) {
 			if (ntfs_is_baad_record(mrec->magic)) {
@@ -1036,14 +1163,32 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 						"record for '%s'.\n", s);
 				goto io_error_exit;
 			}
+			/* $MFT is corrupt but $MFTMirr is ok, use $MFTMirr. */
+                        if (!(mrec->flags & MFT_RECORD_IN_USE) &&
+                                        !ntfs_is_mft_record(mrec->magic))
+                                use_mirr = TRUE;
+
 		}
 		record_size = ntfs_mft_record_get_data_size(mrec);
 		if ((record_size <= sizeof(MFT_RECORD))
 		    || (record_size > vol->mft_record_size)
 		    || memcmp(mrec, mrec2, record_size)) {
-			ntfs_log_error("$MFTMirr does not match $MFT (record "
-				       "%d).\n", i);
-			goto io_error_exit;
+			if (dev->repair_mode == TRUE) {
+				ntfs_log_info("Correcting differences in $MFT%s "
+						"record %d...", use_mirr ? "" : "Mirr",
+						i);
+				br = ntfs_mft_record_write(vol, i,
+						use_mirr ? mrec2 : mrec);
+				if (br) {
+					ntfs_log_perror("Error correcting $MFT%s",
+							use_mirr ? "" : "Mirr");
+					goto io_error_exit;
+				}
+			} else {
+				ntfs_log_error("$MFTMirr does not match $MFT (record "
+						"%d).\n", i);
+				goto io_error_exit;
+			}
 		}
 	}
 
