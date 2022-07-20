@@ -157,6 +157,8 @@ extern int ntfs_index_remove(ntfs_inode *dir_ni, ntfs_inode *ni,
 extern INDEX_ROOT *ntfs_index_root_get(ntfs_inode *ni, ATTR_RECORD *attr);
 
 extern VCN ntfs_ie_get_vcn(INDEX_ENTRY *ie);
+INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
+			ntfs_index_context *ictx);
 
 extern void ntfs_index_entry_mark_dirty(ntfs_index_context *ictx);
 

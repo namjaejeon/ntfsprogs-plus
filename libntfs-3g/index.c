@@ -2034,7 +2034,7 @@ out:
  *	returns the entry at the bottom left in subnode
  */
 
-static INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
+INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 			ntfs_index_context *ictx)
 {
 	INDEX_ENTRY *entry;

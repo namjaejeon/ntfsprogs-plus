@@ -1426,7 +1426,147 @@ free:
 	return result;
 }
 
-static ntfsck_scan_index_entries_bitmap(ntfs_volume *vol)
+static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie)
+{
+	char *filename = ntfs_ie_filename_get(ie);
+	ntfs_inode *ni;
+	struct dir *dir;
+	MFT_REF mref;
+	int ret = 0;
+
+	if (!ie)
+		return -1;
+
+	mref = le64_to_cpu(ie->indexed_file);
+	ntfs_log_verbose("%ld, %s\n", MREF(mref), filename);
+
+	ni = ntfs_inode_open(vol, MREF(mref));
+	if (ni) {
+		if ((ie->key.file_name.file_attributes &
+		     FILE_ATTR_I30_INDEX_PRESENT) && strcmp(filename, ".") &&
+		     strcmp(filename, "./") && strcmp(filename, "..") &&
+		     strcmp(filename, "../")) {
+			dir = (struct dir *)calloc(1, sizeof(struct dir));
+			if (!dir) {
+				ntfs_log_error("Failed to allocate for subdir.\n");
+				ret = -1;
+				goto err_out;
+			}
+
+			dir->ni = ni;
+			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
+		}
+	}
+
+err_out:
+	return ret;
+}
+
+static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
+{
+	ntfs_inode *ni;
+	struct dir *dir;
+	INDEX_ROOT *ir;
+	INDEX_ENTRY *next;
+	ntfs_attr_search_ctx *ctx = NULL;
+	ntfs_index_context *ictx;
+
+	dir = (struct dir *)calloc(1, sizeof(struct dir));
+	if (!dir) {
+		ntfs_log_error("Failed to allocate for subdir.\n");
+		return 1;
+	}
+
+	ni = ntfs_inode_open(vol, FILE_root);
+	if (!ni) {
+		ntfs_log_error("Couldn't open the root directory.\n");
+		free(dir);
+		return 1;
+	}
+
+	dir->ni = ni;
+	ntfs_list_add(&dir->list, &ntfs_dirs_list);
+
+	while (!ntfs_list_empty(&ntfs_dirs_list)) {
+		dir = ntfs_list_entry(ntfs_dirs_list.next, struct dir, list);
+
+		ctx = ntfs_attr_get_search_ctx(dir->ni, NULL);
+		if (!ctx)
+			goto err_out;
+
+		/* Find the index root attribute in the mft record. */
+		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
+					0, ctx)) {
+			ntfs_log_perror("Index root attribute missing in directory inode "
+					"%lld", (unsigned long long)dir->ni->mft_no);
+			ntfs_attr_put_search_ctx(ctx);
+			goto err_out;
+		}
+
+		/* Get to the index root value. */
+		ir = (INDEX_ROOT*)((u8*)ctx->attr +
+				le16_to_cpu(ctx->attr->value_offset));
+
+		ictx = ntfs_index_ctx_get(dir->ni, NTFS_INDEX_I30, 4);
+		if (!ictx) {
+			ntfs_attr_put_search_ctx(ctx);
+			goto err_out;
+		}
+		ictx->actx = ctx;
+		ictx->parent_vcn[ictx->pindex] = VCN_INDEX_ROOT_PARENT;
+		ictx->is_in_root = TRUE;
+		ictx->parent_pos[ictx->pindex] = 0;
+
+		ictx->block_size = le32_to_cpu(ir->index_block_size);
+		if (ictx->block_size < NTFS_BLOCK_SIZE) {
+			ntfs_log_perror("Index block size (%d) is smaller than the "
+					"sector size (%d)", ictx->block_size, NTFS_BLOCK_SIZE);
+			goto err_out;
+		}
+
+		if (vol->cluster_size <= ictx->block_size)
+			ictx->vcn_size_bits = vol->cluster_size_bits;
+		else
+			ictx->vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
+
+		/* The first index entry. */
+		next = (INDEX_ENTRY*)((u8*)&ir->index +
+				le32_to_cpu(ir->index.entries_offset));
+
+		if (!(next->ie_flags & INDEX_ENTRY_END)) {
+			ntfsck_add_dir_list(vol, next);
+		}
+
+		if (next->ie_flags & INDEX_ENTRY_NODE) {
+			ictx->ia_na= ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
+						    ictx->name, ictx->name_len);
+			if (!ictx->ia_na) {
+				ntfs_log_perror("Failed to open index allocation of inode "
+						"%llu", (unsigned long long)dir->ni->mft_no);
+				ntfs_attr_put_search_ctx(ctx);
+				goto err_out;
+			} else {
+				next = ntfs_index_walk_down(next, ictx);
+				ntfsck_add_dir_list(vol, next);
+			}
+		}
+
+		while ((next = ntfs_index_next(next, ictx)) != NULL) {
+			ntfsck_add_dir_list(vol, next);
+		}
+
+		ntfs_index_ctx_put(ictx);
+		ntfs_inode_close(dir->ni);
+		ntfs_list_del(&dir->list);
+		free(dir);
+	}
+
+	return 0;
+err_out:
+	return -1;
+}
+
+static int ntfsck_scan_index_entries_bitmap(ntfs_volume *vol)
 {
 	ntfs_inode *ni;
 	struct dir *dir;
@@ -1476,6 +1616,7 @@ static int ntfsck_scan_volume(ntfs_volume *vol)
 {
 	int result;
 
+	result = ntfsck_scan_index_entries_btree(vol);
 	result = ntfsck_scan_index_entries_bitmap(vol);
 
 	return result;
