@@ -174,9 +174,6 @@ static s64 prev_mft_record;
  * This is just a preliminary volume.
  * Filled while checking the boot sector and used in the preliminary MFT check.
  */
-//static ntfs_volume vol;
-
-static runlist_element *mft_rl, *mft_bitmap_rl;
 
 #define check_failed(FORMAT, ARGS...) \
 	do { \
@@ -210,178 +207,6 @@ static int assert_u32_noteq(u32 val, u32 wrong, const char *name)
 		return 1;
 	}
 	return 0;
-}
-
-/**
- * Load the runlist of the <attr_type> attribute.
- *
- * Return NULL if an error.
- * The caller is responsible on freeing the allocated memory if the result is not NULL.
- *
- * Set size_of_file_record to some reasonable size when in doubt (the Windows default is 1024.)
- *
- * attr_type must be little endian.
- *
- * This function has code duplication with check_file_record() and
- * check_attr_record() but its goal is to be less strict. Thus the
- * duplicated checks are the minimal required for not crashing.
- *
- * Assumes dev is open.
- */
-static runlist *ntfsck_load_runlist(ntfs_volume *rawvol, s64 offset_to_file_record, ATTR_TYPES attr_type, u32 size_of_file_record)
-{
-	u8 *buf;
-	u16 attrs_offset;
-	u32 length;
-	ATTR_RECORD *attr_rec;
-	
-	if (size_of_file_record<22) // offset to attrs_offset
-		return NULL;
-
-	buf = (u8*)ntfs_malloc(size_of_file_record);
-	if (!buf)
-		return NULL;
-
-	if (ntfs_pread(rawvol->dev, offset_to_file_record, size_of_file_record, buf) !=
-			size_of_file_record) {
-		check_failed("Failed to read file record at offset %lld (0x%llx).\n",
-					(long long)offset_to_file_record,
-					(long long)offset_to_file_record);
-		return NULL;
-	}
-
-	attrs_offset = le16_to_cpu(((MFT_RECORD*)buf)->attrs_offset);
-	// first attribute must be after the header.
-	if (attrs_offset<42) {
-		check_failed("First attribute must be after the header (%u).\n", (int)attrs_offset);
-	}
-	attr_rec = (ATTR_RECORD *)(buf + attrs_offset);
-	//printf("uv1.\n");
-
-	while ((u8*)attr_rec<=buf+size_of_file_record-4) {
-
-		//printf("Attr type: 0x%x.\n", attr_rec->type);
-		// Check attribute record. (Only what is in the buffer)
-		if (attr_rec->type==AT_END) {
-			check_failed("Attribute 0x%x not found in file record at offset %lld (0x%llx).\n", (int)le32_to_cpu(attr_rec->type),
-					(long long)offset_to_file_record,
-					(long long)offset_to_file_record);
-			return NULL;
-		}
-		if ((u8*)attr_rec>buf+size_of_file_record-8) {
-			// not AT_END yet no room for the length field.
-			check_failed("Attribute 0x%x is not AT_END, yet no "
-					"room for the length field.\n",
-					(int)le32_to_cpu(attr_rec->type));
-			return NULL;
-		}
-
-		length = le32_to_cpu(attr_rec->length);
-
-		// Check that this attribute does not overflow the mft_record
-		if ((u8*)attr_rec+length >= buf+size_of_file_record) {
-			check_failed("Attribute (0x%x) is larger than FILE record at offset %lld (0x%llx).\n",
-					(int)le32_to_cpu(attr_rec->type),
-					(long long)offset_to_file_record,
-					(long long)offset_to_file_record);
-			return NULL;
-		}
-		// todo: what ATTRIBUTE_LIST (0x20)?
-
-		if (attr_rec->type==attr_type) {
-			// Eurika!
-
-			// ntfs_mapping_pairs_decompress only use two values from vol. Just fake it.
-			// todo: it will also use vol->major_ver if defined(DEBUG). But only for printing purposes.
-
-			// Assume ntfs_boot_sector_parse() was called.
-			return ntfs_mapping_pairs_decompress(rawvol, attr_rec, NULL);
-		}
-
-		attr_rec = (ATTR_RECORD*)((u8*)attr_rec+length);
-	}
-	// If we got here, there was an overflow.
-	check_failed("file record corrupted at offset %lld (0x%llx).\n",
-			(long long)offset_to_file_record,
-			(long long)offset_to_file_record);
-	return NULL;
-}
-
-/**
- * Return: >=0 last VCN
- *	   LCN_EINVAL error.
- */
-static VCN ntfsck_get_last_vcn(runlist *rl)
-{
-	VCN res;
-
-	if (!rl)
-		return LCN_EINVAL;
-
-	res = LCN_EINVAL;
-	while (rl->length) {
-		ntfs_log_verbose("vcn: %lld, length: %lld.\n",
-				(long long)rl->vcn, (long long)rl->length);
-		if (rl->vcn<0)
-			res = rl->vcn;
-		else
-			res = rl->vcn + rl->length;
-		rl++;
-	}
-
-	return res;
-}
-
-static u32 mft_bitmap_records;
-static u8 *mft_bitmap_buf;
-
-/**
- * Assumes mft_bitmap_rl is initialized.
- * return: 0 ok.
- *	   RETURN_OPERATIONAL_ERROR on error.
- */
-static int ntfsck_mft_bitmap_load(ntfs_volume *rawvol)
-{
-	VCN vcn;
-	u32 mft_bitmap_length;
-
-	vcn = ntfsck_get_last_vcn(mft_bitmap_rl);
-	if (vcn<=LCN_EINVAL) {
-		mft_bitmap_buf = NULL;
-		/* This case should not happen, not even with on-disk errors */
-		goto error;
-	}
-
-	mft_bitmap_length = vcn * rawvol->cluster_size;
-	mft_bitmap_records = 8 * mft_bitmap_length * rawvol->cluster_size /
-		rawvol->mft_record_size;
-
-	mft_bitmap_buf = (u8*)ntfs_malloc(mft_bitmap_length);
-	if (!mft_bitmap_buf)
-		goto error;
-	if (ntfs_rl_pread(rawvol, mft_bitmap_rl, 0, mft_bitmap_length,
-			mft_bitmap_buf) != mft_bitmap_length)
-		goto error;
-
-	return 0;
-error:
-	mft_bitmap_records = 0;
-	ntfs_log_error("Could not load $MFT/Bitmap.\n");
-	return RETURN_OPERATIONAL_ERROR;
-}
-
-/**
- * -1 Error.
- *  0 Unused record
- *  1 Used record
- *
- * Assumes mft_bitmap_rl was initialized.
- */
-static int ntfsck_mft_bitmap_get_bit(s64 mft_no)
-{
-	if (mft_no>=mft_bitmap_records)
-		return -1;
-	return ntfs_bit_get(mft_bitmap_buf, mft_no);
 }
 
 static int ntfsck_check_entries_index_root(MFT_RECORD *mft_rec, ATTR_REC *attr_rec)
@@ -622,12 +447,6 @@ find_next_index_buffer:
 			current_mft_record, parent_mft_no,
 			mft_no, ie->key.file_name.file_attributes,
 			ntfs_attr_name_get(fn->file_name, fn->file_name_length));
-
-		if (!ntfsck_mft_bitmap_get_bit(mft_no))
-			check_failed("MFT Reference of the file is invalid");
-
-		if (!ntfsck_mft_bitmap_get_bit(parent_mft_no))
-			check_failed("MFT File Reference of the parent is invalid\n");
 	}
 	goto find_next_index_buffer;
 EOD:
@@ -1106,15 +925,18 @@ static void ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 	// todo: if logfile is clean, return success.
 }
 
+static u8 *mft_bmp_index_buf;
+static s64 mft_bmp_index_buf_size;
+
 static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	u8 *buffer;
-	int is_used;
+	int is_used, ret;
 	int always_exist_sys_meta_num = vol->major_ver >= 3 ? 11 : 10;
 
 	current_mft_record = mft_num;
 
-	is_used = ntfsck_mft_bitmap_get_bit(mft_num);
+	is_used = utils_mftrec_in_use(vol, mft_num);
 	if (is_used < 0) {
 		ntfs_log_error("Error getting bit value for record %lld.\n",
 			(long long)mft_num);
@@ -1142,7 +964,17 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		goto verify_mft_record_error;
 	}
 
-	ntfsck_check_file_record(vol, buffer, vol->mft_record_size, mft_num);
+	ret = ntfs_mft_record_check(vol, mft_num, (MFT_RECORD *)buffer);
+	if (ret) {
+		goto verify_mft_record_error;
+	}
+
+	is_used = ntfs_bit_get(mft_bmp_index_buf, mft_num);
+	if (!is_used) {
+		check_failed("Stale MFT Record %lld\n", (long long)mft_num);
+	}
+
+	//ntfsck_check_file_record(vol, buffer, vol->mft_record_size, mft_num);
 	// todo: if offset to first attribute >= 0x30, number of mft record should match.
 	// todo: Match the "record is used" with the mft bitmap.
 	// todo: if this is not base, check that the parent is a base, and is in use, and pointing to this record.
@@ -1160,208 +992,6 @@ verify_mft_record_error:
 		free(buffer);
 	errors++;
 	return 0;
-}
-
-static int ntfsck_recover_mft_entry(ntfs_volume *vol)
-{
-	s64 l, br;
-	unsigned char *m, *m2;
-	int i, ret = -1; /* failure */
-
-	ntfs_log_info("\nProcessing $MFT and $MFTMirr...\n");
-
-	/* Load data from $MFT and $MFTMirr and compare the contents. */
-	m = (u8 *)malloc(vol->mftmirr_size << vol->mft_record_size_bits);
-	if (!m) {
-		ntfs_log_perror("Failed to allocate memory\n");
-		return -1;
-	}
-	m2 = (u8 *)malloc(vol->mftmirr_size << vol->mft_record_size_bits);
-	if (!m2) {
-		ntfs_log_perror("Failed to allocate memory\n");
-		free(m);
-		return -1;
-	}
-
-	ntfs_log_info("Reading $MFT...\n");
-	l = ntfs_mst_pread(vol->dev, vol->mft_lcn << vol->cluster_size_bits,
-			vol->mftmirr_size, vol->mft_record_size, m);
-	if (l != vol->mftmirr_size) {
-		if (l != -1)
-			errno = EIO;
-		ntfs_log_perror("Failed to read $MFT\n");
-		goto error_exit;
-	}
-
-	ntfs_log_info("Reading $MFTMirr...\n");
-	l = ntfs_mst_pread(vol->dev, vol->mftmirr_lcn << vol->cluster_size_bits,
-			vol->mftmirr_size, vol->mft_record_size, m2);
-	if (l != vol->mftmirr_size) {
-		if (l != -1)
-			errno = EIO;
-		ntfs_log_perror("Failed to read $MFTMirr\n");
-		goto error_exit;
-	}
-
-	/*
-	 * FIXME: Need to actually check the $MFTMirr for being real. Otherwise
-	 * we might corrupt the partition if someone is experimenting with
-	 * software RAID and the $MFTMirr is not actually in the position we
-	 * expect it to be... )-:
-	 * FIXME: We should emit a warning it $MFTMirr is damaged and ask
-	 * user whether to recreate it from $MFT or whether to abort. - The
-	 * warning needs to include the danger of software RAID arrays.
-	 * Maybe we should go as far as to detect whether we are running on a
-	 * MD disk and if yes then bomb out right at the start of the program?
-	 */
-
-	ntfs_log_info("Comparing $MFTMirr to $MFT...\n");
-	/*
-	 * Since 2017, Windows 10 does not mirror to full $MFTMirr when
-	 * using big clusters, and some records may be found different.
-	 * Nevertheless chkdsk.exe mirrors it fully, so we do similarly.
-	 */
-	for (i = 0; i < vol->mftmirr_size; ++i) {
-		MFT_RECORD *mrec, *mrec2;
-		const char *ESTR[12] = { "$MFT", "$MFTMirr", "$LogFile",
-			"$Volume", "$AttrDef", "root directory", "$Bitmap",
-			"$Boot", "$BadClus", "$Secure", "$UpCase", "$Extend" };
-		const char *s;
-		BOOL use_mirr;
-
-		if (i < 12)
-			s = ESTR[i];
-		else if (i < 16)
-			s = "system file";
-		else
-			s = "mft record";
-
-		use_mirr = FALSE;
-		mrec = (MFT_RECORD *)(m + i * vol->mft_record_size);
-		if (mrec->flags & MFT_RECORD_IN_USE) {
-			if (ntfs_is_baad_record(mrec->magic)) {
-				ntfs_log_error("$MFT error: Incomplete multi "
-						"sector transfer detected in "
-						"%s.\nCannot handle this yet. "
-						")-:\n", s);
-				goto error_exit;
-			}
-			if (!ntfs_is_mft_record(mrec->magic)) {
-				ntfs_log_error("$MFT error: Invalid mft "
-						"record for %s.\nCannot "
-						"handle this yet. )-:\n", s);
-				goto error_exit;
-			}
-		}
-		mrec2 = (MFT_RECORD *)(m2 + i * vol->mft_record_size);
-		if (mrec2->flags & MFT_RECORD_IN_USE) {
-			if (ntfs_is_baad_record(mrec2->magic)) {
-				ntfs_log_error("$MFTMirr error: Incomplete "
-						"multi sector transfer "
-						"detected in %s.\n", s);
-				goto error_exit;
-			}
-			if (!ntfs_is_mft_record(mrec2->magic)) {
-				ntfs_log_error("$MFTMirr error: Invalid mft "
-						"record for %s.\n", s);
-				goto error_exit;
-			}
-			/* $MFT is corrupt but $MFTMirr is ok, use $MFTMirr. */
-			if (!(mrec->flags & MFT_RECORD_IN_USE) &&
-			    !ntfs_is_mft_record(mrec->magic))
-				use_mirr = TRUE;
-		}
-
-		if (memcmp(mrec, mrec2, ntfs_mft_record_get_data_size(mrec))) {
-			s64 pos;
-
-			ntfs_log_info("Correcting differences in $MFT%s "
-					"record %d...\n", use_mirr ? "" : "Mirr",
-					i);
-
-			pos = i * vol->mft_record_size;
-			br = ntfs_mst_pwrite(vol->dev,
-				(vol->mft_lcn << vol->cluster_size_bits) + pos,
-				1, vol->mft_record_size, use_mirr ? mrec2 : mrec);
-			if (br != 1) {
-				ntfs_log_perror("Error correcting $MFT%s\n",
-						use_mirr ? "" : "Mirr");
-				goto error_exit;
-			}
-
-			br = ntfs_mst_pwrite(vol->dev,
-				(vol->mftmirr_lcn << vol->cluster_size_bits) + pos,
-				1, vol->mft_record_size, use_mirr ? mrec2 : mrec);
-			if (br != 1) {
-				ntfs_log_perror("Error correcting $MFT%s\n",
-						use_mirr ? "" : "Mirr");
-				goto error_exit;
-			}
-		}
-	}
-
-	ntfs_log_info("Processing of $MFT and $MFTMirr completed "
-			"successfully.\n");
-	ret = 0;
-error_exit:
-	free(m);
-	free(m2);
-	return ret;
-}
-
-/**
- * This function serves as bootstraping for the more comprehensive checks.
- * It will load the MFT runlist and MFT/Bitmap runlist.
- * It should not depend on other checks or we may have a circular dependancy.
- * Also, this loadng must be forgiving, unlike the comprehensive checks.
- */
-static int ntfsck_verify_mft_preliminary(ntfs_volume *rawvol)
-{
-	current_mft_record = 0;
-	s64 mft_offset, mftmirr_offset;
-	int res, err;
-
-	ntfs_log_trace("Entering verify_mft_preliminary().\n");
-	// todo: get size_of_file_record from boot sector
-	// Load the first segment of the $MFT/DATA runlist.
-	mft_offset = rawvol->mft_lcn * rawvol->cluster_size;
-	mftmirr_offset = rawvol->mftmirr_lcn * rawvol->cluster_size;
-	mft_rl = ntfsck_load_runlist(rawvol, mft_offset, AT_DATA, 1024);
-	if (!mft_rl) {
-		check_failed("Loading $MFT runlist failed. Trying $MFTMirr.\n");
-		mft_rl = ntfsck_load_runlist(rawvol, mftmirr_offset, AT_DATA, 1024);
-	}
-	if (!mft_rl) {
-		check_failed("Loading $MFTMirr runlist failed too. Aborting.\n");
-		return RETURN_FS_ERRORS_LEFT_UNCORRECTED | RETURN_OPERATIONAL_ERROR;
-	}
-
-	err = ntfsck_recover_mft_entry(rawvol);
-	if (err)
-		return err;
-
-	// TODO: else { recover $MFT } // Use $MFTMirr to recover $MFT.
-	// todo: support loading the next runlist extents when ATTRIBUTE_LIST is used on $MFT.
-	// If attribute list: Gradually load mft runlist. (parse runlist from first file record, check all referenced file records, continue with the next file record). If no attribute list, just load it.
-
-	// Load the runlist of $MFT/Bitmap.
-	// todo: what about ATTRIBUTE_LIST? Can we reuse code?
-	mft_bitmap_rl = ntfsck_load_runlist(rawvol, mft_offset, AT_BITMAP, 1024);
-	if (!mft_bitmap_rl) {
-		check_failed("Loading $MFT/Bitmap runlist failed. Trying $MFTMirr.\n");
-		mft_bitmap_rl = ntfsck_load_runlist(rawvol, mftmirr_offset, AT_BITMAP, 1024);
-	}
-	if (!mft_bitmap_rl) {
-		check_failed("Loading $MFTMirr/Bitmap runlist failed too. Aborting.\n");
-		return RETURN_FS_ERRORS_LEFT_UNCORRECTED;
-		// todo: rebuild the bitmap by using the "in_use" file record flag or by filling it with 1's.
-	}
-
-	/* Load $MFT/Bitmap */
-	if ((res = ntfsck_mft_bitmap_load(rawvol)))
-		return res;
-	return -1; /* FIXME: Just added to fix compiler warning without
-			thinking about what should be here.  (Yura) */
 }
 
 struct dir {
@@ -1442,6 +1072,14 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie)
 
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
+		if (MREF(mref) > mft_bmp_index_buf_size) {
+			mft_bmp_index_buf_size += 512;
+			mft_bmp_index_buf = ntfs_realloc(mft_bmp_index_buf,
+					mft_bmp_index_buf_size);
+		}
+
+		ntfs_bit_set(mft_bmp_index_buf, MREF(mref), 1);
+
 		if ((ie->key.file_name.file_attributes &
 		     FILE_ATTR_I30_INDEX_PRESENT) && strcmp(filename, ".") &&
 		     strcmp(filename, "./") && strcmp(filename, "..") &&
@@ -1622,7 +1260,7 @@ static int ntfsck_scan_volume(ntfs_volume *vol)
 	return result;
 }
 
-static void ntfsck_check_volume(ntfs_volume *vol)
+static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
 	int err;
@@ -1632,7 +1270,7 @@ static void ntfsck_check_volume(ntfs_volume *vol)
 			vol->mft_record_size_bits;
 	ntfs_log_info("Checking %lld MFT records.\n", (long long)nr_mft_records);
 
-	for (mft_num = 0; mft_num < nr_mft_records; mft_num++) {
+	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++) {
 		err = ntfsck_verify_mft_record(vol, mft_num);
 		if (err)
 			break;
@@ -1757,7 +1395,7 @@ int main(int argc, char **argv)
 
 	ntfsck_scan_volume(vol);
 
-	ntfsck_check_volume(vol);
+	ntfsck_check_mft_records(vol);
 
 	if (errors)
 		ntfs_log_info("Errors found.\n");
