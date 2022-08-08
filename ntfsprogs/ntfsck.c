@@ -928,11 +928,14 @@ static void ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 static u8 *mft_bmp_index_buf;
 static s64 mft_bmp_index_buf_size;
 
+long long mfts_data_size;
+
 static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	u8 *buffer;
-	int is_used, ret;
+	int is_used;
 	int always_exist_sys_meta_num = vol->major_ver >= 3 ? 11 : 10;
+	ntfs_inode *ni;
 
 	current_mft_record = mft_num;
 
@@ -964,14 +967,24 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		goto verify_mft_record_error;
 	}
 
-	ret = ntfs_mft_record_check(vol, mft_num, (MFT_RECORD *)buffer);
-	if (ret) {
-		goto verify_mft_record_error;
-	}
-
 	is_used = ntfs_bit_get(mft_bmp_index_buf, mft_num);
 	if (!is_used) {
 		check_failed("Stale MFT Record %lld\n", (long long)mft_num);
+		if (NVolFsRepair(vol)) {
+			ntfs_log_verbose("Just clear the bit in the $MFT/$BITMAP corresponding stale MFT record\n");
+			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
+				ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n", errno);
+				goto verify_mft_record_error;
+			}
+		}
+
+		goto verify_mft_record_error;
+	}
+
+	ni = ntfs_inode_open(vol, mft_num);
+	if (!ni) {
+		printf("open failed : %ld\n", mft_num);
+		goto verify_mft_record_error;
 	}
 
 	//ntfsck_check_file_record(vol, buffer, vol->mft_record_size, mft_num);
