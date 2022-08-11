@@ -930,6 +930,116 @@ static s64 mft_bmp_index_buf_size;
 
 long long mfts_data_size;
 
+u8 *fsck_lcn_bitmap;
+unsigned int fsck_lcn_bitmap_size;
+
+static void ntfsck_compare_bitmap(ntfs_volume *vol)
+{
+	s64 pos = 0, i, count;
+	BOOL backup_boot_sec_bit = FALSE;
+	u8 bm[NTFS_BUF_SIZE];
+
+	while (1) {
+		count = ntfs_attr_pread(vol->lcnbmp_na, pos, NTFS_BUF_SIZE, bm);
+		if (count == -1) {
+			ntfs_log_error("Couldn't get $Bitmap $DATA");
+			break;
+		}
+
+		if (count == 0) {
+			/* the backup bootsector need not be accounted for */
+			if (((vol->nr_clusters + 7) >> 3) > pos)
+				ntfs_log_error("$Bitmap size is smaller than expected (%lld < %lld)\n",
+						(long long)pos, (long long)vol->lcnbmp_na->data_size);
+			break;
+		}
+
+		for (i = 0; i < count; i++, pos++) {
+			s64 cl;  /* current cluster */
+
+			if (fsck_lcn_bitmap[pos] == bm[i])
+				continue;
+
+			for (cl = pos * 8; cl < (pos + 1) * 8; cl++) {
+				char bit;
+
+				/*
+				 * Don't count cluster allocation bit for backup
+				 * boot sector. Too much allocation bitmap for
+				 * this bit is not need to be allocated.
+				 */
+				if (cl == vol->nr_clusters) {
+					backup_boot_sec_bit = TRUE;
+					continue;
+				}
+
+				bit = ntfs_bit_get(bm, i * 8 + cl % 8);
+				if (ntfs_bit_get(fsck_lcn_bitmap, cl) != bit)
+					ntfs_log_error("stale cluster bit : %ld\n", cl);
+			}
+		}
+
+	}
+
+	if (backup_boot_sec_bit == FALSE)
+		ntfs_log_error("Last cluster bit for backup boot sector is not set in $Bitmap\n");
+}
+
+static void ntfsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
+{
+	while (length--)
+		ntfs_bit_set(bm, pos++, bit);
+}
+
+static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *actx;
+
+	actx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!actx)
+		return -ENOMEM;
+
+	while (!ntfs_attrs_walk(actx)) {
+		if (actx->attr->non_resident) {
+			runlist *rl;
+			int i = 0;
+
+			rl = ntfs_mapping_pairs_decompress(ni->vol, actx->attr,
+					NULL);
+			if (!rl) {
+				ntfs_log_error("Failed to decompress runlist.  Leaving inconsistent metadata.\n");
+				continue;
+			}
+
+			while (rl[i].length && rl[i].lcn > (LCN)LCN_HOLE) {
+				if (fsck_lcn_bitmap_size <
+				    (rl[i].lcn + 1 + rl[i].length) >> 3) {
+					int off = fsck_lcn_bitmap_size;
+
+					fsck_lcn_bitmap_size +=
+						((rl[i].lcn + 1 + rl[i].length +
+						  (NTFS_BLOCK_SIZE - 1)) &
+						 ~(NTFS_BLOCK_SIZE - 1)) >> 3;
+					fsck_lcn_bitmap = ntfs_realloc(fsck_lcn_bitmap,
+							fsck_lcn_bitmap_size);
+					memset(fsck_lcn_bitmap + off, 0,
+					       fsck_lcn_bitmap_size - off);
+				}
+				ntfs_log_verbose("Cluster run of mft entry(%ld) : lcn : %ld, length : %ld\n",
+						ni->mft_no, rl[i].lcn, rl[i].length);
+
+				ntfsck_set_bitmap_range(fsck_lcn_bitmap,
+						rl[i].lcn, rl->length, 1);
+				i++;
+			}
+
+			free(rl);
+		}
+	}
+
+	return 0;
+}
+
 static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	u8 *buffer;
@@ -983,9 +1093,15 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	ni = ntfs_inode_open(vol, mft_num);
 	if (!ni) {
-		printf("open failed : %ld\n", mft_num);
+		ntfs_log_error("open failed : %ld\n", mft_num);
 		goto verify_mft_record_error;
 	}
+
+	/*
+	 * Update number of clusters that is used for each non-resident mft entries to
+	 * bitmap.
+	 */
+	ntfsck_update_lcn_bitmap(ni);
 
 	//ntfsck_check_file_record(vol, buffer, vol->mft_record_size, mft_num);
 	// todo: if offset to first attribute >= 0x30, number of mft record should match.
@@ -1283,18 +1399,32 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 			vol->mft_record_size_bits;
 	ntfs_log_info("Checking %lld MFT records.\n", (long long)nr_mft_records);
 
+	fsck_lcn_bitmap_size = NTFS_BLOCK_SIZE;
+	fsck_lcn_bitmap = ntfs_calloc(NTFS_BLOCK_SIZE);
+	if (!fsck_lcn_bitmap)
+		return;
+
+	/*
+	 * System MFT entries should be verified checked by ntfs_device_mount().
+	 * Here just account number of clusters that is used by system MFT
+	 * entries.
+	 */
+	for (mft_num = 0; mft_num < FILE_first_user; mft_num++) {
+		ntfs_inode *ni;
+
+		ni = ntfs_inode_open(vol, mft_num);
+		if (ni)
+			ntfsck_update_lcn_bitmap(ni);
+	}
+
 	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++) {
 		err = ntfsck_verify_mft_record(vol, mft_num);
 		if (err)
 			break;
 	}
 
-	// todo: Check metadata files.
+	ntfsck_compare_bitmap(vol);
 
-	// todo: Second pass on mft records. Now check the contents as well.
-	// todo: When going through runlists, build a bitmap.
-
-	// todo: cluster accounting.
 	return;
 }
 
