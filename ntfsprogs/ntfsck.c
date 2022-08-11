@@ -1202,9 +1202,14 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie)
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
 		if (MREF(mref) > mft_bmp_index_buf_size) {
-			mft_bmp_index_buf_size += 512;
+			s64 off = mft_bmp_index_buf_size;
+
+			mft_bmp_index_buf_size +=
+				(MREF(mref) + 1 + (NTFS_BLOCK_SIZE - 1)) &
+				 ~(NTFS_BLOCK_SIZE - 1);
 			mft_bmp_index_buf = ntfs_realloc(mft_bmp_index_buf,
 					mft_bmp_index_buf_size);
+			memset(mft_bmp_index_buf + off, 0, mft_bmp_index_buf_size - off);
 		}
 
 		ntfs_bit_set(mft_bmp_index_buf, MREF(mref), 1);
