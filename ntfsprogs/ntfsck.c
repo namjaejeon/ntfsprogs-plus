@@ -1305,7 +1305,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		next = (INDEX_ENTRY*)((u8*)&ir->index +
 				le32_to_cpu(ir->index.entries_offset));
 
-		if (!(next->ie_flags & INDEX_ENTRY_END)) {
+		if (!next->ie_flags) {
 			ntfsck_add_dir_list(vol, next);
 		}
 
