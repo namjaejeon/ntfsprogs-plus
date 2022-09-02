@@ -935,11 +935,12 @@ unsigned int fsck_lcn_bitmap_size;
 
 static void ntfsck_compare_bitmap(ntfs_volume *vol)
 {
-	s64 pos = 0, i, count;
+	s64 pos = 0, wpos, i, count, written;
 	BOOL backup_boot_sec_bit = FALSE;
 	u8 bm[NTFS_BUF_SIZE];
 
 	while (1) {
+		wpos = pos;
 		count = ntfs_attr_pread(vol->lcnbmp_na, pos, NTFS_BUF_SIZE, bm);
 		if (count == -1) {
 			ntfs_log_error("Couldn't get $Bitmap $DATA");
@@ -974,9 +975,21 @@ static void ntfsck_compare_bitmap(ntfs_volume *vol)
 				}
 
 				bit = ntfs_bit_get(bm, i * 8 + cl % 8);
-				if (ntfs_bit_get(fsck_lcn_bitmap, cl) != bit)
-					ntfs_log_error("stale cluster bit : %ld\n", cl);
+				if (ntfs_bit_get(fsck_lcn_bitmap, cl) != bit) {
+					ntfs_log_error("Found stale cluster bit : %ld\n", cl);
+					if (NVolFsRepair(vol)) {
+						ntfs_log_verbose("clear stale cluster bit in lcn bitmap\n");
+						ntfs_bit_set(bm, i * 8 + cl % 8, 0);
+					}
+				}
 			}
+		}
+
+		if (NVolFsRepair(vol)) {
+			written = ntfs_attr_pwrite(vol->lcnbmp_na, wpos, count, bm);
+			if (written != count)
+				ntfs_log_error("lcn bitmap write failed, pos : %ld, count : %ld, written : %ld\n",
+					wpos, count, written);
 		}
 
 	}
