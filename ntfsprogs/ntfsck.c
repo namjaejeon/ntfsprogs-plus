@@ -1185,7 +1185,8 @@ free:
 	return result;
 }
 
-static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie)
+static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
+			       ntfs_index_context *ictx)
 {
 	char *filename = ntfs_ie_filename_get(ie);
 	ntfs_inode *ni;
@@ -1198,7 +1199,6 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie)
 
 	mref = le64_to_cpu(ie->indexed_file);
 	ntfs_log_verbose("%ld, %s\n", MREF(mref), filename);
-
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
 		if (MREF(mref) > mft_bmp_index_buf_size) {
@@ -1228,6 +1228,17 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie)
 			dir->ni = ni;
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 		}
+	} else {
+		ictx->entry = ie;
+		ret = ntfs_index_rm(ictx);
+		if (ret) {
+			ntfs_log_error("Failed to remove index entry, mft-no : %ld, filename : %s\n",
+					MREF(mref), filename);
+		} else {
+			ntfs_log_verbose("Index entry that have mft no : %ld, filename %s is deleted\n",
+					MREF(mref), filename);
+			ret = 1;
+		}
 	}
 
 err_out:
@@ -1242,6 +1253,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	INDEX_ENTRY *next;
 	ntfs_attr_search_ctx *ctx = NULL;
 	ntfs_index_context *ictx;
+	int ret;
 
 	dir = (struct dir *)calloc(1, sizeof(struct dir));
 	if (!dir) {
@@ -1305,9 +1317,8 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		next = (INDEX_ENTRY*)((u8*)&ir->index +
 				le32_to_cpu(ir->index.entries_offset));
 
-		if (!next->ie_flags) {
-			ntfsck_add_dir_list(vol, next);
-		}
+		if (!next->ie_flags)
+			ntfsck_add_dir_list(vol, next, ictx);
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			ictx->ia_na= ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
@@ -1319,14 +1330,22 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				goto err_out;
 			} else {
 				next = ntfs_index_walk_down(next, ictx);
-				ntfsck_add_dir_list(vol, next);
+				ntfsck_add_dir_list(vol, next, ictx);
 			}
 		}
 
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
-			ntfsck_add_dir_list(vol, next);
+add_dir_list:
+			ret = ntfsck_add_dir_list(vol, next, ictx);
+			if (ret) {
+				next = ictx->entry;
+				if (ret < 0)
+					break;
+				goto add_dir_list;
+			}
 		}
 
+		ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 		ntfs_index_ctx_put(ictx);
 		ntfs_inode_close(dir->ni);
 		ntfs_list_del(&dir->list);

@@ -1663,10 +1663,11 @@ out:
 static int ntfs_ih_takeout(ntfs_index_context *icx, INDEX_HEADER *ih,
 			   INDEX_ENTRY *ie, INDEX_BLOCK *ib)
 {
-	INDEX_ENTRY *ie_roam;
+	INDEX_ENTRY *ie_roam, *ie_dup;
 	int freed_space;
 	BOOL full;
 	int ret = STATUS_ERROR;
+	ntfs_index_context *icx_add_ie;
 	
 	ntfs_log_trace("Entering\n");
 	
@@ -1693,9 +1694,18 @@ static int ntfs_ih_takeout(ntfs_index_context *icx, INDEX_HEADER *ih,
 		if (ntfs_ib_write(icx, ib))
 			goto out;
 	
+	ie_dup = ntfs_ie_dup(icx->entry);
 	ntfs_index_ctx_reinit(icx);
+	icx_add_ie = ntfs_index_ctx_get(icx->ni, NTFS_INDEX_I30, 4);
+	if (!icx)
+		goto out;
 
-	ret = ntfs_ie_add(icx, ie_roam);
+	ret = ntfs_ie_add(icx_add_ie, ie_roam);
+	ntfs_index_ctx_put(icx_add_ie);
+	if (ret)
+		goto out;
+
+	ntfs_index_lookup(&ie_dup->key, le16_to_cpu(ie_dup->key_length), icx);
 out:
 	free(ie_roam);
 	return ret;
@@ -1747,9 +1757,9 @@ static int ntfs_index_rm_leaf(ntfs_index_context *icx)
 	INDEX_HEADER *parent_ih;
 	INDEX_ENTRY *ie;
 	int ret = STATUS_ERROR;
-	
+
 	ntfs_log_trace("pindex: %d\n", icx->pindex);
-	
+
 	if (ntfs_icx_parent_dec(icx))
 		return STATUS_ERROR;
 
@@ -1762,19 +1772,25 @@ static int ntfs_index_rm_leaf(ntfs_index_context *icx)
 		ib = ntfs_malloc(icx->block_size);
 		if (!ib)
 			return STATUS_ERROR;
-		
+
 		if (ntfs_ib_read(icx, ntfs_icx_parent_vcn(icx), ib))
 			goto out;
 	
 		parent_ih = &ib->index;
 	}
-	
+
 	ie = ntfs_ie_get_by_pos(parent_ih, ntfs_icx_parent_pos(icx));
+	while (ntfs_ie_get_vcn(ie) != icx->parent_vcn[icx->pindex + 1]) {
+		icx->parent_pos[icx->pindex]++;
+		ie = ntfs_ie_get_by_pos(parent_ih, ntfs_icx_parent_pos(icx));
+	}
+
 	if (!ntfs_ie_end(ie)) {
+
 		ret = ntfs_ih_takeout(icx, parent_ih, ie, ib);
 		goto out;
 	}
-		
+
 	if (ntfs_ih_zero_entry(parent_ih)) {
 		
 		if (ntfs_icx_parent_vcn(icx) == VCN_INDEX_ROOT_PARENT) {
@@ -1806,7 +1822,7 @@ static int ntfs_index_rm_node(ntfs_index_context *icx)
 	int delta, ret = STATUS_ERROR;
 
 	ntfs_log_trace("Entering\n");
-	
+
 	if (!icx->ia_na) {
 		icx->ia_na = ntfs_ia_open(icx, icx->ni);
 		if (!icx->ia_na)
@@ -1818,13 +1834,13 @@ static int ntfs_index_rm_node(ntfs_index_context *icx)
 		return STATUS_ERROR;
 	
 	ie_succ = ntfs_ie_get_next(icx->entry);
-	entry_pos = icx->parent_pos[icx->pindex]++;
+	entry_pos = icx->parent_pos[icx->pindex];
 	pindex = icx->pindex;
 descend:
 	vcn = ntfs_ie_get_vcn(ie_succ);
 	if (ntfs_ib_read(icx, vcn, ib))
 		goto out;
-	
+
 	ie_succ = ntfs_ie_get_first(&ib->index);
 
 	if (ntfs_icx_parent_inc(icx))
@@ -1866,7 +1882,6 @@ descend:
 			
 			ih = &icx->ir->index;
 			entry = ntfs_ie_get_by_pos(ih, entry_pos);
-			
 		} else if (new_size > le32_to_cpu(ih->allocated_size)) {
 			icx->pindex = pindex;
 			ret = ntfs_ib_split(icx, icx->ib);
@@ -1885,13 +1900,13 @@ descend:
 	} else
 		if (ntfs_icx_ib_write(icx))
 			goto out2;
-	
+
 	ntfs_ie_delete(&ib->index, ie_succ);
 	
 	if (ntfs_ih_zero_entry(&ib->index)) {
 		if (ntfs_index_rm_leaf(icx))
 			goto out2;
-	} else 
+	} else
 		if (ntfs_ib_write(icx, ib))
 			goto out2;
 
@@ -1899,6 +1914,7 @@ descend:
 out2:
 	free(ie);
 out:
+	icx->pindex = pindex;
 	free(ib);
 	return ret;
 }
@@ -2047,7 +2063,6 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 
 			/* down from level zero */
 
-			ictx->ir = (INDEX_ROOT*)NULL;
 			ictx->ib = (INDEX_BLOCK*)ntfs_malloc(ictx->block_size);
 			ictx->pindex = 1;
 			ictx->is_in_root = FALSE;
@@ -2074,7 +2089,7 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
  *	returns the parent entry or NULL if no more parent
  */
 
-static INDEX_ENTRY *ntfs_index_walk_up(INDEX_ENTRY *ie,
+INDEX_ENTRY *ntfs_index_walk_up(INDEX_ENTRY *ie,
 			ntfs_index_context *ictx)
 {
 	INDEX_ENTRY *entry;
