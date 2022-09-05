@@ -1042,7 +1042,7 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 						ni->mft_no, rl[i].lcn, rl[i].length);
 
 				ntfsck_set_bitmap_range(fsck_lcn_bitmap,
-						rl[i].lcn, rl->length, 1);
+						rl[i].lcn, rl[i].length, 1);
 				i++;
 			}
 
