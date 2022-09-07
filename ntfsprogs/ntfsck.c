@@ -974,6 +974,9 @@ static void ntfsck_compare_bitmap(ntfs_volume *vol)
 					continue;
 				}
 
+				if (cl > vol->nr_clusters)
+					break;
+
 				bit = ntfs_bit_get(bm, i * 8 + cl % 8);
 				if (ntfs_bit_get(fsck_lcn_bitmap, cl) != bit) {
 					ntfs_log_error("Found stale cluster bit : %ld\n", cl);
