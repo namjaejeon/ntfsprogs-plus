@@ -985,7 +985,7 @@ static void ntfsck_compare_bitmap(ntfs_volume *vol)
 					ntfs_log_error("Found stale cluster bit : %ld\n", cl);
 					if (NVolFsRepair(vol)) {
 						ntfs_log_verbose("clear stale cluster bit in lcn bitmap\n");
-						ntfs_bit_set(bm, i * 8 + cl % 8, 0);
+						ntfs_bit_set(bm, i * 8 + cl % 8, !bit);
 					}
 				}
 			}
