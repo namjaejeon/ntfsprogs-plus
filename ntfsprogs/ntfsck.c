@@ -1112,8 +1112,14 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	ni = ntfs_inode_open(vol, mft_num);
 	if (!ni) {
-		ntfs_log_error("open failed : %ld\n", mft_num);
-		goto verify_mft_record_error;
+		if (NVolFsRepair(vol)) {
+			ntfs_log_error("Just clear the bit of mft no(%ld) in the $MFT/$BITMAP corresponding stale MFT record\n", mft_num);
+			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
+				ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n", errno);
+				goto verify_mft_record_error;
+			}
+		} else
+			goto verify_mft_record_error;
 	}
 
 	/*
