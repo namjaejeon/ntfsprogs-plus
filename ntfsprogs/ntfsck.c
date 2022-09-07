@@ -1315,6 +1315,8 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			ntfs_attr_put_search_ctx(ctx);
 			goto err_out;
 		}
+
+		ictx->ir = ir;
 		ictx->actx = ctx;
 		ictx->parent_vcn[ictx->pindex] = VCN_INDEX_ROOT_PARENT;
 		ictx->is_in_root = TRUE;
@@ -1336,9 +1338,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		next = (INDEX_ENTRY*)((u8*)&ir->index +
 				le32_to_cpu(ir->index.entries_offset));
 
-		if (!next->ie_flags)
-			ntfsck_add_dir_list(vol, next, ictx);
-
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			ictx->ia_na= ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
 						    ictx->name, ictx->name_len);
@@ -1349,8 +1348,14 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				goto err_out;
 			} else {
 				next = ntfs_index_walk_down(next, ictx);
-				ntfsck_add_dir_list(vol, next, ictx);
+				ret = ntfsck_add_dir_list(vol, next, ictx);
+				if (ret)
+					next = ictx->entry;
 			}
+		} else {
+			ret = ntfsck_add_dir_list(vol, next, ictx);
+			if (ret)
+				next = ictx->entry;
 		}
 
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
