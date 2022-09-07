@@ -958,6 +958,9 @@ static void ntfsck_compare_bitmap(ntfs_volume *vol)
 		for (i = 0; i < count; i++, pos++) {
 			s64 cl;  /* current cluster */
 
+			if (pos > fsck_lcn_bitmap_size)
+				continue;
+
 			if (fsck_lcn_bitmap[pos] == bm[i])
 				continue;
 
