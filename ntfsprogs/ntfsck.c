@@ -1586,9 +1586,7 @@ int main(int argc, char **argv)
 	if (errors)
 		ntfs_log_info("Errors found.\n");
 
-	if (!errors) {
-		ntfsck_reset_dirty(vol);
-	}
+	ntfsck_reset_dirty(vol);
 
 	ntfs_umount(vol, FALSE);
 
