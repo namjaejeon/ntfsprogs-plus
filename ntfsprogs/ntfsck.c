@@ -919,12 +919,6 @@ close_inode:
 	return FALSE;
 }
 
-static void ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
-{
-	// At this time, only check that the log is fully replayed.
-	// todo: if logfile is clean, return success.
-}
-
 static u8 *mft_bmp_index_buf;
 static s64 mft_bmp_index_buf_size;
 
@@ -1585,7 +1579,10 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
-	ntfsck_replay_log(vol);
+	if (ntfs_logfile_reset(vol)) {
+		ntfs_log_error("ntfs logfile reset failed, errno : %d\n", errno);
+		goto err_out;
+	}
 
 	if (vol->flags & VOLUME_IS_DIRTY)
 		ntfs_log_warning("Volume is dirty.\n");
@@ -1599,6 +1596,7 @@ int main(int argc, char **argv)
 
 	ntfsck_reset_dirty(vol);
 
+err_out:
 	ntfs_umount(vol, FALSE);
 
 	if (errors)
