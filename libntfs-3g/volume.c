@@ -123,6 +123,8 @@ static const char *access_denied_msg =
 "and the mounting user ID. More explanation is provided at\n"
 "https://github.com/tuxera/ntfs-3g/wiki/NTFS-3G-FAQ\n";
 
+int errors;
+
 /**
  * ntfs_volume_alloc - Create an NTFS volume object and initialise it
  *
@@ -561,6 +563,8 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 	s32 sector_size;
 	struct ntfs_device *dev = vol->dev;
 
+	ntfs_log_info("Parse #1: Boot sector verification...\n");
+
 	sector_size = ntfs_device_sector_size_get(dev);
 	if (sector_size <= 0)
 		sector_size = 512;
@@ -585,7 +589,8 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 	    (ntfs_boot_sector_parse(vol, ntfs_boot) < 0)) {
 		int res = 1;
 
-		if (NVolFsRepair(vol)) {
+		check_failed("Boot sector: invalid boot sector, Fix");
+		if (ntfsck_ask_repair(vol)) {
 			s64 actual_sectors, shown_sectors;
 
 			actual_sectors = ntfs_device_size_get(dev, sector_size) - 1;
@@ -613,7 +618,6 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 				return res;
 			}
 		} else if (res) {
-			ntfs_log_error("Boot sector: invalid boot sector\n");
 			return 1;
 		}
 	}
@@ -654,10 +658,12 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	if (!vol)
 		goto error_exit;
 
-	if (flags == NTFS_MNT_FS_REPAIR)
-		NVolSetFsRepair(vol);
-	else if (flags == NTFS_MNT_FS_JUST_CHECK)
-		NVolSetFsJustCheck(vol);
+	if (flags == NTFS_MNT_FS_YES_REPAIR)
+		NVolSetFsYesRepair(vol);
+	else if (flags == NTFS_MNT_FS_ASK_REPAIR)
+		NVolSetFsAskRepair(vol);
+	else if (flags == NTFS_MNT_FS_AUTO_REPAIR)
+		NVolSetFsAutoRepair(vol);
 	
 	/* Create the default upcase table. */
 	vol->upcase_len = ntfs_upcase_build_default(&vol->upcase);
@@ -1168,10 +1174,10 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		if ((record_size <= sizeof(MFT_RECORD))
 		    || (record_size > vol->mft_record_size)
 		    || memcmp(mrec, mrec2, record_size)) {
-			if (NVolFsRepair(vol)) {
-				ntfs_log_info("Correcting differences in $MFT%s "
-						"record %d...", use_mirr ? "" : "Mirr",
-						i);
+			check_failed("$MFTMirr does not match $MFT (record "
+				"%d). Correcting differences in $MFT%s record",
+				i, use_mirr ? "" : "Mirr");
+			if (ntfsck_ask_repair(vol)) {
 				br = ntfs_mft_record_write(vol, i,
 						use_mirr ? mrec2 : mrec);
 				if (br) {
@@ -1179,9 +1185,8 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 							use_mirr ? "" : "Mirr");
 					goto io_error_exit;
 				}
+				errors--;
 			} else {
-				ntfs_log_error("$MFTMirr does not match $MFT (record "
-						"%d).\n", i);
 				goto io_error_exit;
 			}
 		}
@@ -2150,4 +2155,32 @@ err_out:
 	if (err)
 		errno = err;
 	return err ? -1 : 0;
+}
+
+BOOL ntfsck_ask_repair(ntfs_volume *vol)
+{
+	BOOL repair = FALSE;
+	char answer[8];
+
+	if (NVolFsNoRepair(vol))
+		repair = FALSE;
+	else if (NVolFsYesRepair(vol) || NVolFsAutoRepair(vol)) {
+		repair = TRUE;
+	} else if (NVolFsAskRepair(vol)) {
+		do {
+			printf("(y/N)? ");
+			fflush(stdout);
+
+			if (fgets(answer, sizeof(answer), stdin)) {
+				if (strcasecmp(answer, "Y\n") == 0)
+					return TRUE;
+				else if (strcasecmp(answer, "\n") == 0 ||
+					 strcasecmp(answer, "N\n") == 0)
+					return FALSE;
+			}
+		} while (1);
+	}
+
+	printf("(y/N)? %c\n", repair ? 'y' : 'N');
+	return repair;
 }

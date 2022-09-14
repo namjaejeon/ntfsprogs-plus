@@ -52,6 +52,15 @@ typedef struct _ntfs_volume ntfs_volume;
 #include "attrib.h"
 #include "index.h"
 
+extern int errors;
+
+#define check_failed(FORMAT, ARGS...) \
+	do { \
+		errors++; \
+		ntfs_log_redirect(__FUNCTION__, __FILE__, __LINE__, \
+				NTFS_LOG_LEVEL_ERROR, NULL, FORMAT, ##ARGS); \
+	} while (0);
+
 /**
  * enum ntfs_mount_flags -
  *
@@ -66,8 +75,10 @@ enum {
 	NTFS_MNT_EXCLUSIVE              = 0x08000000,
 	NTFS_MNT_RECOVER                = 0x10000000,
 	NTFS_MNT_IGNORE_HIBERFILE       = 0x20000000,
-	NTFS_MNT_FS_JUST_CHECK		= 0x40000000,
-	NTFS_MNT_FS_REPAIR		= 0x80000000,
+	NTFS_MNT_FS_NO_REPAIR		= 0x40000000,
+	NTFS_MNT_FS_AUTO_REPAIR		= 0x80000000,
+	NTFS_MNT_FS_YES_REPAIR		= 0x100000000,
+	NTFS_MNT_FS_ASK_REPAIR		= 0x200000000,
 };
 typedef unsigned long ntfs_mount_flags;
 
@@ -120,12 +131,14 @@ typedef enum {
 	NV_Compression,		/* 1: allow compression */
 	NV_NoFixupWarn,		/* 1: Do not log fixup errors */
 	NV_FreeSpaceKnown,	/* 1: The free space is now known */
-	NV_FsJustCheck,		/* 1: Volume is for fsck */
-	NV_FsRepair,		/* 1: Volume is for fsck */
+	NV_FsNoRepair,		/* 1: Volume is for fsck */
+	NV_FsAutoRepair,	/* 1: Volume is for fsck */
+	NV_FsYesRepair,		/* 1: Volume is for fsck */
+	NV_FsAskRepair,		/* 1: Volume is for fsck */
 } ntfs_volume_state_bits;
 
-#define  test_nvol_flag(nv, flag)	 test_bit(NV_##flag, (nv)->state)
-#define   set_nvol_flag(nv, flag)	  set_bit(NV_##flag, (nv)->state)
+#define test_nvol_flag(nv, flag)	test_bit(NV_##flag, (nv)->state)
+#define set_nvol_flag(nv, flag)		set_bit(NV_##flag, (nv)->state)
 #define clear_nvol_flag(nv, flag)	clear_bit(NV_##flag, (nv)->state)
 
 #define NVolReadOnly(nv)		 test_nvol_flag(nv, ReadOnly)
@@ -164,13 +177,21 @@ typedef enum {
 #define NVolSetFreeSpaceKnown(nv)	  set_nvol_flag(nv, FreeSpaceKnown)
 #define NVolClearFreeSpaceKnown(nv)	clear_nvol_flag(nv, FreeSpaceKnown)
 
-#define NVolFsJustCheck(nv)		test_nvol_flag(nv, FsJustCheck)
-#define NVolSetFsJustCheck(nv)		set_nvol_flag(nv, FsJustCheck)
-#define NVolClearFsJustCheck(nv)	clear_nvol_flag(nv, FsJustCheck)
+#define NVolFsNoRepair(nv)		test_nvol_flag(nv, FsNoRepair)
+#define NVolSetFsNoRepair(nv)		set_nvol_flag(nv, FsNoRepair)
+#define NVolClearFsNoRepair(nv)		clear_nvol_flag(nv, FsNoRepair)
 
-#define NVolFsRepair(nv)		test_nvol_flag(nv, FsRepair)
-#define NVolSetFsRepair(nv)		set_nvol_flag(nv, FsRepair)
-#define NVolClearFsRepair(nv)		clear_nvol_flag(nv, FsRepair)
+#define NVolFsAutoRepair(nv)		test_nvol_flag(nv, FsAutoRepair)
+#define NVolSetFsAutoRepair(nv)		set_nvol_flag(nv, FsAutoRepair)
+#define NVolClearFsAutoRepair(nv)	clear_nvol_flag(nv, FsAutoRepair)
+
+#define NVolFsYesRepair(nv)		test_nvol_flag(nv, FsYesRepair)
+#define NVolSetFsYesRepair(nv)		set_nvol_flag(nv, FsYesRepair)
+#define NVolClearFsYesRepair(nv)	clear_nvol_flag(nv, FsYesRepair)
+
+#define NVolFsAskRepair(nv)		test_nvol_flag(nv, FsAskRepair)
+#define NVolSetFsAskRepair(nv)		set_nvol_flag(nv, FsAskRepair)
+#define NVolClearFsAskRepair(nv)	clear_nvol_flag(nv, FsAskRepair)
 
 /*
  * NTFS version 1.1 and 1.2 are used by Windows NT4.
@@ -330,6 +351,7 @@ extern int ntfs_set_shown_files(ntfs_volume *vol,
 		BOOL show_sys_files, BOOL show_hid_files, BOOL hide_dot_files);
 extern int ntfs_set_locale(void);
 extern int ntfs_set_ignore_case(ntfs_volume *vol);
+extern BOOL ntfsck_ask_repair(ntfs_volume *vol);
 
 #endif /* defined _NTFS_VOLUME_H */
 
