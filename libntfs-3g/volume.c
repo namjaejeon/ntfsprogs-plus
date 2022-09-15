@@ -2157,7 +2157,7 @@ err_out:
 	return err ? -1 : 0;
 }
 
-BOOL ntfsck_ask_repair(ntfs_volume *vol)
+BOOL ntfsck_ask_repair(const ntfs_volume *vol)
 {
 	BOOL repair = FALSE;
 	char answer[8];

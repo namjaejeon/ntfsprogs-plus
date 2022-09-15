@@ -239,13 +239,21 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	int ret = -1;
 	u32 offset;
 	s32 space;
+	BOOL fixed = FALSE;
 	
 	if (!ntfs_is_file_record(m->magic)) {
 		if (!NVolNoFixupWarn(vol))
 			ntfs_log_error("Record %llu has no FILE magic (0x%x)\n",
 				(unsigned long long)MREF(mref),
 				(int)le32_to_cpu(*(le32*)m));
-		goto err_out;
+
+		++errors;
+		if (ntfsck_ask_repair(vol)) {
+			m->magic = magic_FILE;
+			--errors;
+			fixed = TRUE;
+		} else
+			goto err_out;
 	}
 	
 	if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size) {
@@ -253,7 +261,13 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 			       "(%u <> %u)\n", (unsigned long long)MREF(mref),
 			       vol->mft_record_size,
 			       le32_to_cpu(m->bytes_allocated));
-		goto err_out;
+		++errors;
+		if (ntfsck_ask_repair(vol)) {
+			m->bytes_allocated = cpu_to_le32(vol->mft_record_size);
+			--errors;
+			fixed = TRUE;
+		} else
+			goto err_out;
 	}
 	if (!NVolNoFixupWarn(vol)
 	    && (le32_to_cpu(m->bytes_in_use) > vol->mft_record_size)) {
@@ -309,6 +323,12 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	
 	ret = 0;
 err_out:
+
+	if (fixed) {
+		if (ntfs_mft_record_write(vol, mref, m))
+			ret = -1;
+	}
+
 	if (ret)
 		errno = EIO;
 	return ret;
