@@ -563,8 +563,6 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 	s32 sector_size;
 	struct ntfs_device *dev = vol->dev;
 
-	ntfs_log_info("Parse #1: Boot sector verification...\n");
-
 	sector_size = ntfs_device_sector_size_get(dev);
 	if (sector_size <= 0)
 		sector_size = 512;

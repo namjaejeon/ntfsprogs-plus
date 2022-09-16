@@ -325,7 +325,13 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 err_out:
 
 	if (fixed) {
-		if (ntfs_mft_record_write(vol, mref, m))
+		if (mref <= FILE_MFTMirr) {
+			s64 pos = (vol->mft_lcn << vol->cluster_size_bits) +
+				(mref * vol->mft_record_size);
+
+			if (ntfs_mst_pwrite(vol->dev, pos, 1, vol->mft_record_size, m) != 1)
+				ret = -1;
+		} else if (ntfs_mft_record_write(vol, mref, m))
 			ret = -1;
 	}
 

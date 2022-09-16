@@ -160,46 +160,12 @@ static const struct option opts[] = {
 	{NULL,			0,			NULL,	 0  }
 };
 
-/* Assuming NO_NTFS_DEVICE_DEFAULT_IO_OPS is not set */
-
-static s64 current_mft_record;
-static s64 prev_mft_record;
-
-/**
- * 0 success.
- * 1 fail.
- */
-static int assert_u32_equal(u32 val, u32 ok, const char *name)
-{
-	if (val!=ok) {
-		check_failed("Assertion failed for '%lld:%s'. should be 0x%x, "
-			"was 0x%x.\n", (long long)current_mft_record, name,
-			(int)ok, (int)val);
-		//errors++;
-		return 1;
-	}
-	return 0;
-}
-
-static int assert_u32_noteq(u32 val, u32 wrong, const char *name)
-{
-	if (val==wrong) {
-		check_failed("Assertion failed for '%lld:%s'. should not be "
-			"0x%x.\n", (long long)current_mft_record, name,
-			(int)wrong);
-		return 1;
-	}
-	return 0;
-}
-
 ntfschar NTFS_INDEX_I30[5] = { const_cpu_to_le16('$'), const_cpu_to_le16('I'),
 	const_cpu_to_le16('3'), const_cpu_to_le16('0'),
 	const_cpu_to_le16('\0') };
 
 static u8 *mft_bmp_index_buf;
 static s64 mft_bmp_index_buf_size;
-
-long long mfts_data_size;
 
 u8 *fsck_lcn_bitmap;
 unsigned int fsck_lcn_bitmap_size;
@@ -339,8 +305,6 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	int is_used;
 	int always_exist_sys_meta_num = vol->major_ver >= 3 ? 11 : 10;
 	ntfs_inode *ni;
-
-	current_mft_record = mft_num;
 
 	is_used = utils_mftrec_in_use(vol, mft_num);
 	if (is_used < 0) {
@@ -728,24 +692,6 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 			vol->mft_record_size_bits;
 	ntfs_log_verbose("Checking %lld MFT records.\n", (long long)nr_mft_records);
 
-	fsck_lcn_bitmap_size = NTFS_BLOCK_SIZE;
-	fsck_lcn_bitmap = ntfs_calloc(NTFS_BLOCK_SIZE);
-	if (!fsck_lcn_bitmap)
-		return;
-
-	/*
-	 * System MFT entries should be verified checked by ntfs_device_mount().
-	 * Here just account number of clusters that is used by system MFT
-	 * entries.
-	 */
-	for (mft_num = 0; mft_num < FILE_first_user; mft_num++) {
-		ntfs_inode *ni;
-
-		ni = ntfs_inode_open(vol, mft_num);
-		if (ni)
-			ntfsck_update_lcn_bitmap(ni);
-	}
-
 	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++) {
 		err = ntfsck_verify_mft_record(vol, mft_num);
 		if (err)
@@ -789,6 +735,42 @@ static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 	}
 
 	return 0;
+}
+
+static ntfs_volume *ntfsck_check_system_files_and_mount(struct ntfs_device *dev,
+		ntfs_mount_flags flags)
+{
+	ntfs_inode *ni;
+	ntfs_volume *vol;
+	s64 mft_num;
+
+	ntfs_log_info("Parse #1: Check check system files...\n");
+
+	/* Call ntfs_device_mount() to do the actual mount. */
+	vol = ntfs_device_mount(dev, option.flags);
+	if (!vol)
+		return vol;
+
+	fsck_lcn_bitmap_size = NTFS_BLOCK_SIZE;
+	fsck_lcn_bitmap = ntfs_calloc(NTFS_BLOCK_SIZE);
+	if (!fsck_lcn_bitmap) {
+		ntfs_umount(vol, FALSE);
+		return NULL;
+	}
+
+	/*
+	 * System MFT entries should be verified checked by ntfs_device_mount().
+	 * Here just account number of clusters that is used by system MFT
+	 * entries.
+	 */
+	for (mft_num = 0; mft_num < FILE_first_user; mft_num++) {
+
+		ni = ntfs_inode_open(vol, mft_num);
+		if (ni)
+			ntfsck_update_lcn_bitmap(ni);
+	}
+
+	return vol;
 }
 
 /**
@@ -873,10 +855,8 @@ int main(int argc, char **argv)
 	if (!dev)
 		return RETURN_OPERATIONAL_ERROR;
 
-	/* Call ntfs_device_mount() to do the actual mount. */
-	vol = ntfs_device_mount(dev, option.flags);
+	vol = ntfsck_check_system_files_and_mount(dev, option.flags);
 	if (!vol) {
-		ntfs_log_error("ntfs_device_mount failed\n");
 		ntfs_device_free(dev);
 		return 2;
 	}
