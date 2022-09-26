@@ -301,7 +301,6 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
-	u8 *buffer;
 	int is_used;
 	int always_exist_sys_meta_num = vol->major_ver >= 3 ? 11 : 10;
 	ntfs_inode *ni;
@@ -324,15 +323,7 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		return 0;
 	}
 
-	buffer = ntfs_malloc(vol->mft_record_size);
-	if (!buffer)
-		goto verify_mft_record_error;
-
 	ntfs_log_verbose("MFT record %lld\n", (long long)mft_num);
-	if (ntfs_attr_pread(vol->mft_na, mft_num*vol->mft_record_size, vol->mft_record_size, buffer) < 0) {
-		ntfs_log_perror("Couldn't read $MFT record %lld", (long long)mft_num);
-		goto verify_mft_record_error;
-	}
 
 	is_used = ntfs_bit_get(fsck_mft_bmp, mft_num);
 	if (!is_used) {
@@ -373,8 +364,6 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	return 0;
 verify_mft_record_error:
 
-	if (buffer)
-		free(buffer);
 	errors++;
 	return 0;
 }
