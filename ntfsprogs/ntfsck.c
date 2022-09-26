@@ -164,8 +164,8 @@ ntfschar NTFS_INDEX_I30[5] = { const_cpu_to_le16('$'), const_cpu_to_le16('I'),
 	const_cpu_to_le16('3'), const_cpu_to_le16('0'),
 	const_cpu_to_le16('\0') };
 
-static u8 *mft_bmp_index_buf;
-static s64 mft_bmp_index_buf_size;
+static u8 *fsck_mft_bmp;
+static s64 fsck_mft_bmp_size;
 
 u8 *fsck_lcn_bitmap;
 unsigned int fsck_lcn_bitmap_size;
@@ -334,7 +334,7 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		goto verify_mft_record_error;
 	}
 
-	is_used = ntfs_bit_get(mft_bmp_index_buf, mft_num);
+	is_used = ntfs_bit_get(fsck_mft_bmp, mft_num);
 	if (!is_used) {
 		check_failed("There is no index entry corresponding to the mft entry(%ld). Fix",
 				mft_num);
@@ -406,18 +406,18 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 	ntfs_log_verbose("%ld, %s\n", MREF(mref), filename);
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
-		if (MREF(mref) > mft_bmp_index_buf_size) {
-			s64 off = mft_bmp_index_buf_size;
+		if (MREF(mref) >> 3 > fsck_mft_bmp_size) {
+			s64 off = fsck_mft_bmp_size;
 
-			mft_bmp_index_buf_size +=
-				(MREF(mref) + 1 + (NTFS_BLOCK_SIZE - 1)) &
+			fsck_mft_bmp_size +=
+				((MREF(mref) >> 3) + 1 + (NTFS_BLOCK_SIZE - 1)) &
 				 ~(NTFS_BLOCK_SIZE - 1);
-			mft_bmp_index_buf = ntfs_realloc(mft_bmp_index_buf,
-					mft_bmp_index_buf_size);
-			memset(mft_bmp_index_buf + off, 0, mft_bmp_index_buf_size - off);
+			fsck_mft_bmp = ntfs_realloc(fsck_mft_bmp,
+					fsck_mft_bmp_size);
+			memset(fsck_mft_bmp + off, 0, fsck_mft_bmp_size - off);
 		}
 
-		ntfs_bit_set(mft_bmp_index_buf, MREF(mref), 1);
+		ntfs_bit_set(fsck_mft_bmp, MREF(mref), 1);
 
 		if ((ie->key.file_name.file_attributes &
 		     FILE_ATTR_I30_INDEX_PRESENT) && strcmp(filename, ".") &&
@@ -763,6 +763,14 @@ static ntfs_volume *ntfsck_check_system_files_and_mount(struct ntfs_device *dev,
 	fsck_lcn_bitmap_size = NTFS_BLOCK_SIZE;
 	fsck_lcn_bitmap = ntfs_calloc(NTFS_BLOCK_SIZE);
 	if (!fsck_lcn_bitmap) {
+		ntfs_umount(vol, FALSE);
+		return NULL;
+	}
+
+	fsck_mft_bmp_size = NTFS_BLOCK_SIZE;
+	fsck_mft_bmp = ntfs_calloc(fsck_mft_bmp_size);
+	if (!fsck_mft_bmp) {
+		free(fsck_lcn_bitmap);
 		ntfs_umount(vol, FALSE);
 		return NULL;
 	}
