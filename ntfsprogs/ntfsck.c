@@ -463,6 +463,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	ntfs_attr_search_ctx *ctx = NULL;
 	ntfs_index_context *ictx;
 	int ret;
+	COLLATION_RULES cr;
 
 	dir = (struct dir *)calloc(1, sizeof(struct dir));
 	if (!dir) {
@@ -500,6 +501,8 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		ir = (INDEX_ROOT*)((u8*)ctx->attr +
 				le16_to_cpu(ctx->attr->value_offset));
 
+		cr = ir->collation_rule;
+
 		ictx = ntfs_index_ctx_get(dir->ni, NTFS_INDEX_I30, 4);
 		if (!ictx) {
 			ntfs_attr_put_search_ctx(ctx);
@@ -528,6 +531,12 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		next = (INDEX_ENTRY*)((u8*)&ir->index +
 				le32_to_cpu(ir->index.entries_offset));
 
+		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0);
+		if (ret > 0) {
+			ret = ntfsck_write_index_entry(ictx);
+			if (ret)
+				goto err_out;
+		}
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			ictx->ia_na= ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
 						    ictx->name, ictx->name_len);

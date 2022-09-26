@@ -139,9 +139,9 @@ extern ntfs_index_context *ntfs_index_ctx_get(ntfs_inode *ni,
 extern void ntfs_index_ctx_put(ntfs_index_context *ictx);
 extern void ntfs_index_ctx_reinit(ntfs_index_context *ictx);
 
-extern int ntfs_index_block_inconsistent(const INDEX_BLOCK *ib, u32 block_size,
-			u64 inum, VCN vcn);
-extern int ntfs_index_entry_inconsistent(const INDEX_ENTRY *ie,
+extern int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
+		INDEX_BLOCK *ib, u32 block_size, u64 inum, VCN vcn);
+extern int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 			COLLATION_RULES collation_rule, u64 inum);
 extern int ntfs_index_lookup(const void *key, const int key_len,
 		ntfs_index_context *ictx) __attribute_warn_unused_result__;
@@ -171,6 +171,9 @@ extern void ntfs_ih_filename_dump(INDEX_HEADER *ih);
 /* the following was added by JPA for use in security.c */
 extern int ntfs_ie_add(ntfs_index_context *icx, INDEX_ENTRY *ie);
 extern int ntfs_index_rm(ntfs_index_context *icx);
+
+int ntfs_ib_write(ntfs_index_context *icx, INDEX_BLOCK *ib);
+int ntfsck_write_index_entry(ntfs_index_context *ictx);
 
 #endif /* _NTFS_INDEX_H */
 

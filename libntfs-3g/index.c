@@ -80,7 +80,7 @@ static VCN ntfs_ib_pos_to_vcn(ntfs_index_context *icx, s64 pos)
 	return pos >> icx->vcn_size_bits;
 }
 
-static int ntfs_ib_write(ntfs_index_context *icx, INDEX_BLOCK *ib)
+int ntfs_ib_write(ntfs_index_context *icx, INDEX_BLOCK *ib)
 {
 	s64 ret, vcn = sle64_to_cpu(ib->index_block_vcn);
 	
@@ -457,17 +457,24 @@ static INDEX_ROOT *ntfs_ir_lookup2(ntfs_inode *ni, ntfschar *name, u32 len)
  *      size(INDEX_HEADER) <= ent_offset < ind_length <= alloc_size < bk_size
  */
 
-int ntfs_index_block_inconsistent(const INDEX_BLOCK *ib, u32 block_size,
-			u64 inum, VCN vcn)
+int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
+		INDEX_BLOCK *ib, u32 block_size, u64 inum, VCN vcn)
 {
 	u32 ib_size = (unsigned)le32_to_cpu(ib->index.allocated_size)
 			+ offsetof(INDEX_BLOCK, index);
+	BOOL fixed = FALSE;
 
 	if (!ntfs_is_indx_record(ib->magic)) {
 		ntfs_log_error("Corrupt index block signature: vcn %lld inode "
 			       "%llu\n", (long long)vcn,
 			       (unsigned long long)inum);
-		return -1;
+		++errors;
+		if (ntfsck_ask_repair(vol)) {
+			ib->magic = magic_INDX;
+			--errors;
+			fixed = TRUE;
+		} else
+			return -1;
 	}
 	
 	if (sle64_to_cpu(ib->index_block_vcn) != vcn) {
@@ -476,7 +483,13 @@ int ntfs_index_block_inconsistent(const INDEX_BLOCK *ib, u32 block_size,
 			       (long long)sle64_to_cpu(ib->index_block_vcn),
 			       (long long)vcn,
 			       (unsigned long long)inum);
-		return -1;
+		++errors;
+		if (ntfsck_ask_repair(vol)) {
+			ib->index_block_vcn = cpu_to_sle64(vcn);
+			--errors;
+			fixed = TRUE;
+		} else
+			return -1;
 	}
 	
 	if (ib_size != block_size) {
@@ -485,7 +498,14 @@ int ntfs_index_block_inconsistent(const INDEX_BLOCK *ib, u32 block_size,
 			       "specified size (%u)\n", (long long)vcn, 
 			       (unsigned long long)inum, ib_size,
 			       (unsigned int)block_size);
-		return -1;
+		++errors;
+		if (ntfsck_ask_repair(vol)) {
+			ib->index.allocated_size = cpu_to_le32(block_size -
+				offsetof(INDEX_BLOCK, index));
+			--errors;
+			fixed = TRUE;
+		} else
+			return -1;
 	}
 	if (le32_to_cpu(ib->index.entries_offset) < sizeof(INDEX_HEADER)) {
 		ntfs_log_error("Invalid index entry offset in inode %lld\n",
@@ -505,6 +525,18 @@ int ntfs_index_block_inconsistent(const INDEX_BLOCK *ib, u32 block_size,
 		return -1;
 	}
 
+	if (fixed) {
+		u8 vcn_size_bits;
+
+		if (vol->cluster_size <= block_size)
+			vcn_size_bits = vol->cluster_size_bits;
+		else
+			vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
+
+		if (ntfs_attr_mst_pwrite(ia_na, vcn << vcn_size_bits, 1,
+					block_size, (u8 *)ib) != 1)
+			return -1;
+	}
 	return (0);
 }
 
@@ -522,20 +554,68 @@ int ntfs_index_block_inconsistent(const INDEX_BLOCK *ib, u32 block_size,
  *		-1 otherwise (with errno unchanged)
  */
 
-int ntfs_index_entry_inconsistent(const INDEX_ENTRY *ie,
+int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 			COLLATION_RULES collation_rule, u64 inum)
 {
-	int ret;
+	int ret = 0;
+	BOOL fixed;
 
-	ret = 0;
-	if (ie->key_length
-		&& ((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key))
-			    > le16_to_cpu(ie->length))) {
+	if (!ie)
+		return 0;
+
+	if (ie->ie_flags & INDEX_ENTRY_END)
+		return 0;
+
+	if (ie->ie_flags & INDEX_ENTRY_NODE) {
+#if 0
+		VCN vcn = ie + (le16_to_cpu(ie->length) - 8);
+
+		if (vcn > max) {
+			check_failed("vcn in index node exceed vcn : %ld\n", vcn);
+		}
+#endif
+		if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) !=
+		    (le16_to_cpu(ie->length) - 8)) {
+			check_failed("there is no vcn space for index noded\n");
+			return -1;
+		}
+	}
+
+	if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) ==
+	    (le16_to_cpu(ie->length) - 8)) {
+		if (!(ie->ie_flags & INDEX_ENTRY_NODE)) {
+			check_failed("INDEX_ENTRY_NODE is not set in index entry");
+			if (ntfsck_ask_repair(vol)) {
+				ie->ie_flags |= INDEX_ENTRY_NODE;
+				--errors;
+				ret = 1;
+			} else
+				return -1;
+		}
+	}
+
+	if (ie->key_length &&
+	    ((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key)) >
+	     le16_to_cpu(ie->length))) {
 		ntfs_log_error("Overflow from index entry in inode %lld\n",
 				(long long)inum);
-		ret = -1;
+		errors++;
+		if (ntfsck_ask_repair(vol)) {
+			int index_off = offsetof(INDEX_ENTRY, key.file_name.file_name) +
+					ie->key.file_name.file_name_length * sizeof(ntfschar);
+			if (ie->ie_flags & INDEX_ENTRY_NODE)
+				index_off += 8;
 
-	} else
+			if (index_off <= le16_to_cpu(ie->length)) {
+				ie->key_length = index_off;
+				--errors;
+				ret = 1;
+			} else
+				ret = -1;
+		} else
+			ret = -1;
+
+	} else {
 		if (collation_rule == COLLATION_FILE_NAME) {
 			if ((offsetof(INDEX_ENTRY, key.file_name.file_name)
 				    + ie->key.file_name.file_name_length
@@ -557,6 +637,25 @@ int ntfs_index_entry_inconsistent(const INDEX_ENTRY *ie,
 				ret = -1;
 			}
 		}
+
+		if (ret == -1) {
+			errors++;
+			if (ntfsck_ask_repair(vol)) {
+				--errors;
+				if (collation_rule == COLLATION_FILE_NAME) {
+					ie->key.file_name.file_name_length = ie->key_length / sizeof(ntfschar);
+				} else {
+					u16 data_length = le16_to_cpu(ie->length);
+
+					if (ie->ie_flags & INDEX_ENTRY_NODE)
+						data_length -= 8;
+
+					ie->data_length = cpu_to_le16(data_length);
+				}
+				ret = 1;
+			}
+		}
+	}
 	return (ret);
 }
 
@@ -614,8 +713,9 @@ static int ntfs_ie_lookup(const void *key, const int key_len,
 			return STATUS_ERROR;
 		}
 			/* Make sure key and data do not overflow from entry */
-		if (ntfs_index_entry_inconsistent(ie, icx->ir->collation_rule,
-				icx->ni->mft_no)) {
+		rc = ntfs_index_entry_inconsistent(icx->ni->vol, ie, icx->ir->collation_rule,
+				icx->ni->mft_no);
+		if (rc < 0) {
 			errno = EIO;
 			return STATUS_ERROR;
 		}
@@ -703,8 +803,8 @@ static int ntfs_ib_read(ntfs_index_context *icx, VCN vcn, INDEX_BLOCK *dst)
 		return -1;
 	}
 	
-	if (ntfs_index_block_inconsistent((INDEX_BLOCK*)dst, icx->block_size,
-				icx->ia_na->ni->mft_no, vcn)) {
+	if (ntfs_index_block_inconsistent(icx->ni->vol, icx->ia_na, (INDEX_BLOCK*)dst,
+				icx->block_size, icx->ia_na->ni->mft_no, vcn)) {
 		errno = EIO;
 		return -1;
 	}
@@ -1431,6 +1531,17 @@ static VCN ntfs_icx_parent_pos(ntfs_index_context *icx)
 	return icx->parent_pos[icx->pindex];
 }
 
+int ntfsck_write_index_entry(ntfs_index_context *ictx)
+{
+	ntfs_log_verbose("Update index entry to disk\n");
+
+	if (ntfs_icx_parent_vcn(ictx) == VCN_INDEX_ROOT_PARENT)
+		ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
+	else
+		if (ntfs_ib_write(ictx, ictx->ib))
+			return -1;
+	return 0;
+}
 
 static int ntfs_ir_insert_median(ntfs_index_context *icx, INDEX_ENTRY *median,
 				 VCN new_vcn)
@@ -2075,8 +2186,16 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 		ictx->parent_pos[ictx->pindex] = 0;
 		ictx->parent_vcn[ictx->pindex] = vcn;
 		if (!ntfs_ib_read(ictx,vcn,ictx->ib)) {
+			int ret;
+
 			ictx->entry = ntfs_ie_get_first(&ictx->ib->index);
 			entry = ictx->entry;
+			ret = ntfs_index_entry_inconsistent(ictx->ni->vol, entry, ictx->ir->collation_rule, 0);
+			if (ret > 0) {
+				ret = ntfsck_write_index_entry(ictx);
+				if (ret)
+					entry = NULL;
+			}
 		} else
 			entry = (INDEX_ENTRY*)NULL;
 	} while (entry && (entry->ie_flags & INDEX_ENTRY_NODE));
@@ -2165,7 +2284,10 @@ INDEX_ENTRY *ntfs_index_walk_up(INDEX_ENTRY *ie,
 
 INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 {
+	ntfs_volume *vol = ictx->ni->vol;
+	COLLATION_RULES cr = ictx->ir->collation_rule;
 	INDEX_ENTRY *next;
+	int ret;
 	le16 flags;
 
 			/*
@@ -2184,6 +2306,13 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 
 		next = (INDEX_ENTRY*)((char*)ie + le16_to_cpu(ie->length));
 		++ictx->parent_pos[ictx->pindex];
+
+		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0);
+		if (ret > 0) {
+			ret = ntfsck_write_index_entry(ictx);
+			if (ret)
+				return NULL;
+		}
 		flags = next->ie_flags;
 
 			/* walk down if it has a subnode */
@@ -2203,6 +2332,14 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 
 	if (next && (next->ie_flags & INDEX_ENTRY_END))
 		next = (INDEX_ENTRY*)NULL;
+	else {
+		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0);
+		if (ret > 0) {
+			ret = ntfsck_write_index_entry(ictx);
+			if (ret)
+				next = (INDEX_ENTRY*)NULL;
+		}
+	}
 	return (next);
 }
 

@@ -255,7 +255,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		} else
 			goto err_out;
 	}
-	
+
 	if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size) {
 		ntfs_log_error("Record %llu has corrupt allocation size "
 			       "(%u <> %u)\n", (unsigned long long)MREF(mref),
