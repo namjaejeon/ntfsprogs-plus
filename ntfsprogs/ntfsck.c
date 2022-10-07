@@ -120,6 +120,8 @@ static struct {
 	ntfs_mount_flags flags;
 } option;
 
+int parse_count = 1;
+
 /**
  * usage
  */
@@ -170,11 +172,13 @@ static s64 fsck_mft_bmp_size;
 u8 *fsck_lcn_bitmap;
 unsigned int fsck_lcn_bitmap_size;
 
-static void ntfsck_compare_bitmap(ntfs_volume *vol)
+static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 {
 	s64 pos = 0, wpos, i, count, written;
 	BOOL backup_boot_sec_bit = FALSE, repair = FALSE;
 	u8 bm[NTFS_BUF_SIZE];
+
+	ntfs_log_info("Parse #%d: Check orphaned clusters...\n", parse_count++);
 
 	while (1) {
 		wpos = pos;
@@ -219,7 +223,7 @@ static void ntfsck_compare_bitmap(ntfs_volume *vol)
 
 				bit = ntfs_bit_get(bm, i * 8 + cl % 8);
 				if (ntfs_bit_get(fsck_lcn_bitmap, cl) != bit) {
-					check_failed("Found stale cluster bit : %ld. Clear stable cluster bit in lcn bitmap",
+					check_failed("Found orphaned cluster bit : %ld. Clear orphaned cluster bit in lcn bitmap",
 							cl);
 					if (ntfsck_ask_repair(vol)) {
 						ntfs_bit_set(bm, i * 8 + cl % 8, !bit);
@@ -327,7 +331,7 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	is_used = ntfs_bit_get(fsck_mft_bmp, mft_num);
 	if (!is_used) {
-		check_failed("There is no index entry corresponding to the mft entry(%ld). Fix",
+		check_failed("Found an orphaned file(mft no: %ld). Fix",
 				mft_num);
 		if (ntfsck_ask_repair(vol)) {
 			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
@@ -342,7 +346,7 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	ni = ntfs_inode_open(vol, mft_num);
 	if (!ni) {
-		check_failed("Clear the bit of mft no(%ld) in the $MFT/$BITMAP corresponding stale MFT record",
+		check_failed("Clear the bit of mft no(%ld) in the $MFT/$BITMAP corresponding orphaned MFT record",
 				mft_num);
 		if (ntfsck_ask_repair(vol)) {
 			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
@@ -670,7 +674,7 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 {
 	int result;
 
-	ntfs_log_info("Parse #3: Check index entries in volume...\n");
+	ntfs_log_info("Parse #%d: Check index entries in volume...\n", parse_count++);
 
 	result = ntfsck_scan_index_entries_btree(vol);
 	result = ntfsck_scan_index_entries_bitmap(vol);
@@ -683,7 +687,7 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	s64 mft_num, nr_mft_records;
 	int err;
 
-	ntfs_log_info("Parse #4: Check MFT Records in volume...\n");
+	ntfs_log_info("Parse #%d: Check mft entries in volume...\n", parse_count++);
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
@@ -695,8 +699,6 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 		if (err)
 			break;
 	}
-
-	ntfsck_compare_bitmap(vol);
 
 	return;
 }
@@ -721,7 +723,7 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 
 static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 {
-	ntfs_log_info("Parse #2: Replay logfile...\n");
+	ntfs_log_info("Parse #%d: Replay logfile...\n", parse_count++);
 
 	/*
 	 * For now, Just reset logfile.
@@ -742,7 +744,7 @@ static ntfs_volume *ntfsck_check_system_files_and_mount(struct ntfs_device *dev,
 	ntfs_volume *vol;
 	s64 mft_num;
 
-	ntfs_log_info("Parse #1: Check check system files...\n");
+	ntfs_log_info("Parse #%d: Check check system files...\n", parse_count++);
 
 	/* Call ntfs_device_mount() to do the actual mount. */
 	vol = ntfs_device_mount(dev, option.flags);
@@ -876,6 +878,8 @@ int main(int argc, char **argv)
 	ntfsck_scan_index_entries(vol);
 
 	ntfsck_check_mft_records(vol);
+
+	ntfsck_check_orphaned_clusters(vol);
 
 	if (errors)
 		ntfs_log_info("%d errors found.\n", errors);
