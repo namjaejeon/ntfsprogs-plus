@@ -351,8 +351,8 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 				goto verify_mft_record_error;
 			}
 			errors--;
-		} else
-			goto verify_mft_record_error;
+		}
+		goto verify_mft_record_error;
 	}
 
 	/*
