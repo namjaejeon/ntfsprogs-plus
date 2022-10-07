@@ -178,7 +178,7 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 	BOOL backup_boot_sec_bit = FALSE, repair = FALSE;
 	u8 bm[NTFS_BUF_SIZE];
 
-	ntfs_log_info("Parse #%d: Check orphaned clusters...\n", parse_count++);
+	ntfs_log_info("Parse #%d: Check cluster bitmap...\n", parse_count++);
 
 	while (1) {
 		wpos = pos;
@@ -206,7 +206,7 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 				continue;
 
 			for (cl = pos * 8; cl < (pos + 1) * 8; cl++) {
-				char bit;
+				char lbmp_bit, fsck_bmp_bit;
 
 				/*
 				 * Don't count cluster allocation bit for backup
@@ -221,12 +221,16 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 				if (cl > vol->nr_clusters)
 					break;
 
-				bit = ntfs_bit_get(bm, i * 8 + cl % 8);
-				if (ntfs_bit_get(fsck_lcn_bitmap, cl) != bit) {
-					check_failed("Found orphaned cluster bit : %ld. Clear orphaned cluster bit in lcn bitmap",
-							cl);
+				lbmp_bit = ntfs_bit_get(bm, i * 8 + cl % 8);
+				fsck_bmp_bit = ntfs_bit_get(fsck_lcn_bitmap, cl);
+				if (fsck_bmp_bit != lbmp_bit) {
+					if (fsck_bmp_bit == 0 && lbmp_bit == 1) {
+						check_failed("Found orphaned cluster bit : %ld. Clear orphaned cluster bit in cluster bitmap", cl);
+					} else {
+						check_failed("Found missing cluster bit set : %ld in cluster bitmap. Set orphaned cluster bit into cluster bitmap", cl);
+					}
 					if (ntfsck_ask_repair(vol)) {
-						ntfs_bit_set(bm, i * 8 + cl % 8, !bit);
+						ntfs_bit_set(bm, i * 8 + cl % 8, !lbmp_bit);
 						repair = TRUE;
 						errors--;
 					}
