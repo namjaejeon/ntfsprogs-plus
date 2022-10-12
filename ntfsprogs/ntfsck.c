@@ -549,14 +549,16 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				ret = ntfsck_add_dir_list(vol, next, ictx);
 				if (ret) {
 					next = ictx->entry;
-					goto add_dir_list;
+					if (!(next->ie_flags & INDEX_ENTRY_END))
+						goto add_dir_list;
 				}
 			}
 		} else {
 			ret = ntfsck_add_dir_list(vol, next, ictx);
 			if (ret) {
 				next = ictx->entry;
-				goto add_dir_list;
+				if (!(next->ie_flags & INDEX_ENTRY_END))
+					goto add_dir_list;
 			}
 		}
 
@@ -567,7 +569,8 @@ add_dir_list:
 				next = ictx->entry;
 				if (ret < 0)
 					break;
-				goto add_dir_list;
+				if (!(next->ie_flags & INDEX_ENTRY_END))
+					goto add_dir_list;
 			}
 		}
 
