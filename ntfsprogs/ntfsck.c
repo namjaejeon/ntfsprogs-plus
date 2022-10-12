@@ -547,13 +547,17 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			} else {
 				next = ntfs_index_walk_down(next, ictx);
 				ret = ntfsck_add_dir_list(vol, next, ictx);
-				if (ret)
+				if (ret) {
 					next = ictx->entry;
+					goto add_dir_list;
+				}
 			}
 		} else {
 			ret = ntfsck_add_dir_list(vol, next, ictx);
-			if (ret)
+			if (ret) {
 				next = ictx->entry;
+				goto add_dir_list;
+			}
 		}
 
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
