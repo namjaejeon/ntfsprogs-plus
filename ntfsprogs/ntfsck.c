@@ -687,7 +687,8 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 	ntfs_log_info("Parse #%d: Check index entries in volume...\n", parse_count++);
 
 	result = ntfsck_scan_index_entries_btree(vol);
-	result = ntfsck_scan_index_entries_bitmap(vol);
+	if (!result)
+		result = ntfsck_scan_index_entries_bitmap(vol);
 
 	return result;
 }
@@ -706,8 +707,6 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++) {
 		ntfsck_verify_mft_record(vol, mft_num);
 	}
-
-	return;
 }
 
 static int ntfsck_reset_dirty(ntfs_volume *vol)
@@ -882,7 +881,10 @@ int main(int argc, char **argv)
 	if (vol->flags & VOLUME_IS_DIRTY)
 		ntfs_log_warning("Volume is dirty.\n");
 
-	ntfsck_scan_index_entries(vol);
+	if (ntfsck_scan_index_entries(vol)) {
+		ntfs_log_error("Stop processing fsck due to critical problems\n");
+		goto err_out;
+	}
 
 	ntfsck_check_mft_records(vol);
 
