@@ -307,7 +307,7 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 	return 0;
 }
 
-static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
+static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	int is_used;
 	int always_exist_sys_meta_num = vol->major_ver >= 3 ? 11 : 10;
@@ -317,36 +317,22 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	if (is_used < 0) {
 		ntfs_log_error("Error getting bit value for record %lld.\n",
 			(long long)mft_num);
-		return -1;
+		errors++;
+		return;
 	} else if (!is_used) {
 		if (mft_num <= always_exist_sys_meta_num) {
 			ntfs_log_verbose("Record %lld unused. Fixing or fail about system files.\n",
 					(long long)mft_num);
 			errors++;
-			return 0;
+			return;
 		}
 
 		ntfs_log_verbose("Record %lld unused. Skipping.\n",
 				(long long)mft_num);
-		return 0;
+		return;
 	}
 
 	ntfs_log_verbose("MFT record %lld\n", (long long)mft_num);
-
-	is_used = ntfs_bit_get(fsck_mft_bmp, mft_num);
-	if (!is_used) {
-		check_failed("Found an orphaned file(mft no: %ld). Fix",
-				mft_num);
-		if (ntfsck_ask_repair(vol)) {
-			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
-				ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n", errno);
-				goto verify_mft_record_error;
-			}
-			errors--;
-		}
-
-		goto verify_mft_record_error;
-	}
 
 	ni = ntfs_inode_open(vol, mft_num);
 	if (!ni) {
@@ -356,11 +342,31 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
 				ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n",
 						errno);
-				goto verify_mft_record_error;
+				return;
 			}
 			errors--;
 		}
-		goto verify_mft_record_error;
+		return;
+	}
+
+	is_used = ntfs_bit_get(fsck_mft_bmp, mft_num);
+	if (!is_used) {
+		check_failed("Found an orphaned file(mft no: %ld). Fix",
+				mft_num);
+		if (ntfsck_ask_repair(vol)) {
+			/* FIXME: Should we remove each attributes here in mft entry ? */
+
+			while (ni->nr_extents)
+				if (ntfs_mft_record_free(vol, *(ni->extent_nis))) {
+					ntfs_log_error("Failed to free extent MFT record.  "
+							"Leaving inconsistent metadata.\n");
+				}
+			if (ntfs_mft_record_free(vol, ni))
+				ntfs_log_error("Failed to free MFT record.  "
+						"Leaving inconsistent metadata. Run chkdsk.\n");
+			errors--;
+			return;
+		}
 	}
 
 	/*
@@ -369,11 +375,7 @@ static int ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	 */
 	ntfsck_update_lcn_bitmap(ni);
 
-	return 0;
-verify_mft_record_error:
-
-	errors++;
-	return 0;
+	ntfs_inode_close(ni);
 }
 
 struct dir {
@@ -689,7 +691,6 @@ static int ntfsck_scan_index_entries(ntfs_volume *vol)
 static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
-	int err;
 
 	ntfs_log_info("Parse #%d: Check mft entries in volume...\n", parse_count++);
 
@@ -699,9 +700,7 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	ntfs_log_verbose("Checking %lld MFT records.\n", (long long)nr_mft_records);
 
 	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++) {
-		err = ntfsck_verify_mft_record(vol, mft_num);
-		if (err)
-			break;
+		ntfsck_verify_mft_record(vol, mft_num);
 	}
 
 	return;
