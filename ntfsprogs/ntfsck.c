@@ -389,19 +389,89 @@ struct ntfsls_dirent {
 
 NTFS_LIST_HEAD(ntfs_dirs_list);
 
+
+static int ntfsck_check_name_attr_index_entry(ntfs_inode *ni, INDEX_ENTRY *ie,
+		ntfs_index_context *ictx)
+{
+	ntfs_volume *vol = ni->vol;
+	ntfs_attr_search_ctx *actx;
+	FILE_NAME_ATTR *fn, *first_fn = NULL;
+	FILE_NAME_ATTR *ie_fn = (FILE_NAME_ATTR *)&ie->key;
+	MFT_REF mref = le64_to_cpu(ie->indexed_file);
+	int err;
+	char *s;
+
+	actx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!actx)
+		return -ENOMEM;
+
+	while ((err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
+					0, NULL, 0, actx)) == 0) {
+		IGNORE_CASE_BOOL case_sensitive = IGNORE_CASE;
+
+		fn = (FILE_NAME_ATTR*)((u8*)actx->attr +
+				le16_to_cpu(actx->attr->value_offset));
+		s = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
+		ntfs_log_verbose("name: '%s'  type: %d\n", s, fn->file_name_type);
+		ntfs_attr_name_free(&s);
+
+		if (fn->file_name_type == FILE_NAME_POSIX)
+			case_sensitive = CASE_SENSITIVE;
+		if (fn->file_name_type == ie_fn->file_name_type)
+			first_fn = fn;
+
+		if (ntfs_names_are_equal(fn->file_name, fn->file_name_length,
+					ie_fn->file_name, ie_fn->file_name_length,
+					case_sensitive, vol->upcase,
+					vol->upcase_len))
+			return 0;
+	}
+
+	check_failed("Filename(in $FILE_NAME) in INDEX ENTRY is different with MFT(%ld) ENTRY's one", MREF(mref));
+	err = -EIO;
+	if (ntfsck_ask_repair(vol)) {
+		ictx->entry = ie;
+		err = ntfs_index_rm(ictx);
+		if (err)
+			ntfs_log_error("Failed to remove index entry, mft-no : %ld",
+					MREF(mref));
+		else {
+			err = ntfsck_write_index_entry(ictx);
+			if (err)
+				ntfs_log_error("ntfsck_write_index_entry failed. err : %d\n", err);
+		}
+
+		if (first_fn) {
+			err = ntfs_index_add_filename(ictx->actx->ntfs_ino,
+					first_fn, mref);
+			if(err)
+				ntfs_log_error("Failed to add index entry, mft-no : %ld\n",
+						MREF(mref));
+			else
+				--errors;
+		}
+	}
+
+	ntfs_attr_put_search_ctx(actx);
+
+	return err;
+}
+
 static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 			       ntfs_index_context *ictx)
 {
-	char *filename = ntfs_ie_filename_get(ie);
+	char *filename;
 	ntfs_inode *ni;
 	struct dir *dir;
 	MFT_REF mref;
 	int ret = 0;
+	FILE_NAME_ATTR *ie_fn = (FILE_NAME_ATTR *)&ie->key;
 
 	if (!ie)
 		return -1;
 
 	mref = le64_to_cpu(ie->indexed_file);
+	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 	ntfs_log_verbose("%ld, %s\n", MREF(mref), filename);
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
@@ -415,6 +485,8 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 					fsck_mft_bmp_size);
 			memset(fsck_mft_bmp + off, 0, fsck_mft_bmp_size - off);
 		}
+
+		ntfsck_check_name_attr_index_entry(ni, ie, ictx);
 
 		ntfs_bit_set(fsck_mft_bmp, MREF(mref), 1);
 
