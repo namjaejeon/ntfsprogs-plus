@@ -546,21 +546,11 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				goto err_out;
 			} else {
 				next = ntfs_index_walk_down(next, ictx);
-				ret = ntfsck_add_dir_list(vol, next, ictx);
-				if (ret) {
-					next = ictx->entry;
-					if (!(next->ie_flags & INDEX_ENTRY_END))
-						goto add_dir_list;
-				}
-			}
-		} else {
-			ret = ntfsck_add_dir_list(vol, next, ictx);
-			if (ret) {
-				next = ictx->entry;
-				if (!(next->ie_flags & INDEX_ENTRY_END))
-					goto add_dir_list;
 			}
 		}
+
+		if (!(next->ie_flags & INDEX_ENTRY_END))
+			goto add_dir_list;
 
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
 add_dir_list:
