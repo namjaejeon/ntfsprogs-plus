@@ -378,6 +378,100 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	ntfs_inode_close(ni);
 }
 
+#if DEBUG
+void ntfsck_debug_print_fn_attr(ntfs_attr_search_ctx *actx,
+		FILE_NAME_ATTR *idx_fn, FILE_NAME_ATTR *mft_fn)
+{
+	STANDARD_INFORMATION *std_info;
+	ntfs_time si_ctime;
+	ntfs_time si_mtime;
+	ntfs_time si_mtime_mft;
+	ntfs_time si_atime;
+	ntfs_inode *ni;
+	BOOL diff = FALSE;
+
+	if (!actx)
+		return;
+
+	if (ntfs_attr_lookup(AT_STANDARD_INFORMATION, AT_UNNAMED,
+				0, CASE_SENSITIVE, 0, NULL, 0, actx)) {
+		/* it's not possible here, because $STD_INFO's already checked
+		 * in ntfs_inode_open() */
+		return;
+	}
+
+	ni = actx->ntfs_ino;
+
+	std_info = (STANDARD_INFORMATION *)((u8 *)actx->attr +
+			le16_to_cpu(actx->attr->value_offset));
+	si_ctime = std_info->creation_time;
+	si_mtime = std_info->last_data_change_time;
+	si_mtime_mft = std_info->last_mft_change_time;
+	si_atime = std_info->last_access_time;
+
+	if (si_mtime != mft_fn->last_data_change_time ||
+			si_mtime_mft != mft_fn->last_mft_change_time) {
+		ntfs_log_debug("STD TIME != MFT/$FN\n");
+		diff = TRUE;
+	}
+
+	if (si_mtime != ni->last_data_change_time ||
+			si_mtime_mft != ni->last_mft_change_time) {
+		ntfs_log_debug("STD TIME != INODE\n");
+		diff = TRUE;
+	}
+
+	if (si_mtime != idx_fn->last_data_change_time ||
+			si_mtime_mft != idx_fn->last_mft_change_time) {
+		ntfs_log_debug("STD TIME != IDX/$FN\n");
+		diff = TRUE;
+	}
+
+	if (idx_fn->parent_directory != mft_fn->parent_directory) {
+		ntfs_log_debug("different parent_directory IDX/$FN, MFT/$FN\n");
+		diff = TRUE;
+	}
+	if (idx_fn->allocated_size != mft_fn->allocated_size) {
+		ntfs_log_debug("different allocated_size IDX/$FN, MFT/$FN\n");
+		diff = TRUE;
+	}
+	if (idx_fn->allocated_size != mft_fn->allocated_size) {
+		ntfs_log_debug("different allocated_size IDX/$FN, MFT/$FN\n");
+		diff = TRUE;
+	}
+	if (idx_fn->data_size != mft_fn->data_size) {
+		ntfs_log_debug("different data_size IDX/$FN, MFT/$FN\n");
+		diff = TRUE;
+	}
+
+	if (idx_fn->reparse_point_tag != mft_fn->reparse_point_tag) {
+		ntfs_log_debug("different reparse_point IDX/$FN:%x, MFT/$FN:%x\n",
+				idx_fn->reparse_point_tag,
+				mft_fn->reparse_point_tag);
+		diff = TRUE;
+	}
+
+	if (diff == FALSE)
+		return;
+
+	ntfs_log_debug("======== START %llu ================\n", ni->mft_no);
+	ntfs_log_debug("inode ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
+			ni->creation_time, ni->last_data_change_time,
+			ni->last_mft_change_time, ni->last_access_time);
+	ntfs_log_debug("std_info ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
+			si_ctime, si_mtime, si_mtime_mft, si_atime);
+	ntfs_log_debug("mft_fn ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
+			mft_fn->creation_time, mft_fn->last_data_change_time,
+			mft_fn->last_mft_change_time, mft_fn->last_access_time);
+	ntfs_log_debug("idx_fn ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
+			idx_fn->creation_time, idx_fn->last_data_change_time,
+			idx_fn->last_mft_change_time, idx_fn->last_access_time);
+	ntfs_log_debug("======== END =======================\n");
+
+	return;
+}
+#endif
+
 struct dir {
 	struct ntfs_list_head list;
 	ntfs_inode *ni;
@@ -390,30 +484,39 @@ struct ntfsls_dirent {
 NTFS_LIST_HEAD(ntfs_dirs_list);
 
 
-static int ntfsck_check_name_attr_index_entry(ntfs_inode *ni, INDEX_ENTRY *ie,
+/*
+ * check $FILE_NAME attribute in directory index and same one in MFT entry
+ * @ni : MFT entry inode
+ * @ie : index entry of file (parent's index)
+ * @ictx : index context for lookup, not for ni. It's context of ni's parent
+ */
+static int ntfsck_check_file_name_attr(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx)
 {
 	ntfs_volume *vol = ni->vol;
-	ntfs_attr_search_ctx *actx;
-	FILE_NAME_ATTR *fn, *first_fn = NULL;
-	FILE_NAME_ATTR *ie_fn = (FILE_NAME_ATTR *)&ie->key;
+	ntfs_attr_search_ctx *actx = NULL;
 	MFT_REF mref = le64_to_cpu(ie->indexed_file);
-	int err;
-	char *s;
+	FILE_NAME_ATTR *fn,
+		       *first_fn = NULL;
+	FILE_NAME_ATTR *ie_fn = (FILE_NAME_ATTR *)&ie->key;
+	ATTR_RECORD *attr;
+	char *filename;
+	int ret = -EIO;
+	BOOL need_fix = FALSE;
 
 	actx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!actx)
 		return -ENOMEM;
 
-	while ((err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
+	while ((ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
 					0, NULL, 0, actx)) == 0) {
 		IGNORE_CASE_BOOL case_sensitive = IGNORE_CASE;
 
-		fn = (FILE_NAME_ATTR*)((u8*)actx->attr +
-				le16_to_cpu(actx->attr->value_offset));
-		s = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
-		ntfs_log_verbose("name: '%s'  type: %d\n", s, fn->file_name_type);
-		ntfs_attr_name_free(&s);
+		attr = actx->attr;
+		fn = (FILE_NAME_ATTR*)((u8*)attr +
+				le16_to_cpu(attr->value_offset));
+		filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
+		ntfs_log_verbose("name: '%s'  type: %d\n", filename, fn->file_name_type);
 
 		if (fn->file_name_type == FILE_NAME_POSIX)
 			case_sensitive = CASE_SENSITIVE;
@@ -423,28 +526,32 @@ static int ntfsck_check_name_attr_index_entry(ntfs_inode *ni, INDEX_ENTRY *ie,
 		if (ntfs_names_are_equal(fn->file_name, fn->file_name_length,
 					ie_fn->file_name, ie_fn->file_name_length,
 					case_sensitive, vol->upcase,
-					vol->upcase_len))
-			return 0;
+					vol->upcase_len)) {
+			goto found;
+		}
+
+		ntfs_attr_name_free(&filename);
 	}
 
+	/* NOT FOUND MFT/$FN */
+remove_index:
 	check_failed("Filename(in $FILE_NAME) in INDEX ENTRY is different with MFT(%ld) ENTRY's one", MREF(mref));
-	err = -EIO;
 	if (ntfsck_ask_repair(vol)) {
 		ictx->entry = ie;
-		err = ntfs_index_rm(ictx);
-		if (err)
+		ret = ntfs_index_rm(ictx);
+		if (ret)
 			ntfs_log_error("Failed to remove index entry, mft-no : %ld",
 					MREF(mref));
 		else {
-			err = ntfsck_write_index_entry(ictx);
-			if (err)
-				ntfs_log_error("ntfsck_write_index_entry failed. err : %d\n", err);
+			ret = ntfsck_write_index_entry(ictx);
+			if (ret)
+				ntfs_log_error("ntfsck_write_index_entry failed. ret : %d\n", ret);
 		}
 
 		if (first_fn) {
-			err = ntfs_index_add_filename(ictx->actx->ntfs_ino,
+			ret = ntfs_index_add_filename(ictx->actx->ntfs_ino,
 					first_fn, mref);
-			if(err)
+			if (ret)
 				ntfs_log_error("Failed to add index entry, mft-no : %ld\n",
 						MREF(mref));
 			else
@@ -453,8 +560,106 @@ static int ntfsck_check_name_attr_index_entry(ntfs_inode *ni, INDEX_ENTRY *ie,
 	}
 
 	ntfs_attr_put_search_ctx(actx);
+	return ret;
 
-	return err;
+found:
+	/* FOUND!! MFT/$FN about IDX/$FN */
+
+	ret = 0;
+	/* check parent MFT reference */
+	if (ie_fn->parent_directory != fn->parent_directory) {
+		u64 idx_pdir;		/* IDX/$FN's parent MFT no */
+		u64 mft_pdir;		/* MFT/$FN's parent MFT no */
+		u16 idx_pdir_seq;	/* IDX/$FN's parent MFT sequence no */
+		u16 mft_pdir_seq;	/* MFT/$FN's parent MFT sequence no */
+
+		idx_pdir = MREF_LE(ie_fn->parent_directory);
+		mft_pdir = MREF_LE(fn->parent_directory);
+		idx_pdir_seq = MSEQNO_LE(ie_fn->parent_directory);
+		mft_pdir_seq = MSEQNO_LE(fn->parent_directory);
+
+		if (mft_pdir != ictx->ni->mft_no) {
+			/* parent MFT entry is not matched! */
+			/* Remove this IDX/$FN and,
+			 * TODO: Should add IDX/$FN for MFT/$FN in it's parent index */
+			ntfs_attr_name_free(&filename);
+			first_fn = fn;	/* add $FN to IDX after remove wrong index. */
+			goto remove_index;
+		}
+
+		if (idx_pdir != mft_pdir || idx_pdir_seq != mft_pdir_seq) {
+			check_failed("Parent MFT's sequence No. is differnt "
+					"(IDX/$FN:%u MFT/$FN:%u) "
+					"on inode(%llu, %s)",
+					idx_pdir_seq, mft_pdir_seq,
+					(unsigned long long)ni->mft_no, filename);
+			need_fix = TRUE;
+			goto fix_index;
+		}
+	}
+
+	/* check $FN size fields */
+	if (ie_fn->allocated_size != fn->allocated_size) {
+		check_failed("Allocated size is different "
+			" (IDX/$FN:%llu MFT/$FN:%llu) "
+			"on inode(%llu, %s)",
+			(unsigned long long)sle64_to_cpu(ie_fn->allocated_size),
+			(unsigned long long)sle64_to_cpu(fn->allocated_size),
+			(unsigned long long)ni->mft_no, filename);
+		need_fix = TRUE;
+		goto fix_index;
+	}
+
+	if (ie_fn->data_size != fn->data_size) {
+		check_failed("Data size is different "
+			"(IDX/$FN:%llu MFT/$FN:%llu) "
+			"on inode(%llu, %s)",
+			(unsigned long long)sle64_to_cpu(ie_fn->data_size),
+			(unsigned long long)sle64_to_cpu(fn->data_size),
+			(unsigned long long)ni->mft_no, filename);
+		need_fix = TRUE;
+		goto fix_index;
+	}
+
+	/* check reparse point */
+	if (fn->file_attributes & FILE_ATTR_REPARSE_POINT) {
+		if (ie_fn->reparse_point_tag != fn->reparse_point_tag) {
+			check_failed("Reparse tag is different "
+				"(IDX/$FN:%08lx MFT/$FN:%08lx) "
+				"on inode(%llu, %s)",
+				(long)le32_to_cpu(ie_fn->reparse_point_tag),
+				(long)le32_to_cpu(fn->reparse_point_tag),
+				(unsigned long long)ni->mft_no, filename);
+			need_fix = TRUE;
+			goto fix_index;
+		}
+	}
+
+	/* set NI_FileNameDirty in ni->state to sync
+	 * $FILE_NAME attrib when ntfs_inode_close() is called */
+fix_index:
+	if (need_fix) {
+		if (ntfsck_ask_repair(vol)) {
+			NInoFileNameSetDirty(ni);
+			NInoSetDirty(ni);
+			ntfs_inode_update_times(ictx->ni, NTFS_UPDATE_CTIME);
+
+			/* CHECK: copy all MFT/$FN field to IDX/$FN */
+			memcpy(ie_fn, fn, sizeof(FILE_NAME_ATTR) - sizeof(ntfschar));
+			ret = ntfsck_write_index_entry(ictx);
+			if (!ret)
+				errors--;
+		}
+	}
+
+#if DEBUG
+	ntfsck_debug_print_fn_attr(actx, ie_fn, fn);
+#endif
+
+	ntfs_attr_name_free(&filename);
+	ntfs_attr_put_search_ctx(actx);
+	return ret;
+
 }
 
 static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
@@ -486,7 +691,7 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 			memset(fsck_mft_bmp + off, 0, fsck_mft_bmp_size - off);
 		}
 
-		ntfsck_check_name_attr_index_entry(ni, ie, ictx);
+		ntfsck_check_file_name_attr(ni, ie, ictx);
 
 		ntfs_bit_set(fsck_mft_bmp, MREF(mref), 1);
 
