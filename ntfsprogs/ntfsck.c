@@ -279,26 +279,28 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 			continue;
 		}
 
-		while (rl[i].length && rl[i].lcn > (LCN)LCN_HOLE) {
-			if (fsck_lcn_bitmap_size <
-			    (rl[i].lcn + 1 + rl[i].length) >> 3) {
-				int off = fsck_lcn_bitmap_size;
+		while (rl[i].length) {
+			if (rl[i].lcn > (LCN)LCN_HOLE) {
+				if (fsck_lcn_bitmap_size <
+				    (rl[i].lcn + 1 + rl[i].length) >> 3) {
+					int off = fsck_lcn_bitmap_size;
 
-				fsck_lcn_bitmap_size +=
-					((rl[i].lcn + 1 + rl[i].length +
-					  (NTFS_BLOCK_SIZE - 1)) &
-					 ~(NTFS_BLOCK_SIZE - 1)) >> 3;
-				fsck_lcn_bitmap = ntfs_realloc(fsck_lcn_bitmap,
-						fsck_lcn_bitmap_size);
-				memset(fsck_lcn_bitmap + off, 0,
-						fsck_lcn_bitmap_size - off);
+					fsck_lcn_bitmap_size +=
+						((rl[i].lcn + 1 + rl[i].length +
+						  (NTFS_BLOCK_SIZE - 1)) &
+						 ~(NTFS_BLOCK_SIZE - 1)) >> 3;
+					fsck_lcn_bitmap = ntfs_realloc(fsck_lcn_bitmap,
+							fsck_lcn_bitmap_size);
+					memset(fsck_lcn_bitmap + off, 0,
+							fsck_lcn_bitmap_size - off);
+				}
+				ntfs_log_verbose("Cluster run of mft entry(%ld) : lcn : %ld, length : %ld\n",
+						ni->mft_no, rl[i].lcn, rl[i].length);
+
+				ntfsck_set_bitmap_range(fsck_lcn_bitmap,
+						rl[i].lcn, rl[i].length, 1);
 			}
-			ntfs_log_verbose("Cluster run of mft entry(%ld) : lcn : %ld, length : %ld\n",
-					ni->mft_no, rl[i].lcn, rl[i].length);
-
-			ntfsck_set_bitmap_range(fsck_lcn_bitmap,
-					rl[i].lcn, rl[i].length, 1);
-			i++;
+			++i;
 		}
 
 		free(rl);
