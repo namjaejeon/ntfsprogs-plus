@@ -825,6 +825,8 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				goto err_out;
 			} else {
 				next = ntfs_index_walk_down(next, ictx);
+				if (!next)
+					goto next_dir;
 			}
 		}
 
@@ -843,6 +845,7 @@ add_dir_list:
 			}
 		}
 
+next_dir:
 		ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 		ntfs_index_ctx_put(ictx);
 		ntfs_inode_close(dir->ni);
