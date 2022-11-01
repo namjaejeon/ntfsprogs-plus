@@ -740,7 +740,7 @@ typedef struct {
 /* 12*/	ATTR_FLAGS flags;	/* Flags describing the attribute. */
 /* 14*/	le16 instance;		/* The instance of this attribute record. This
 				   number is unique within this mft record (see
-				   MFT_RECORD/next_attribute_instance notes
+				   MFT_RECORD/next_attr_instance notes
 				   above for more details). */
 /* 16*/	union {
 		/* Resident attributes. */
@@ -2102,6 +2102,13 @@ typedef struct {
 /* sizeof() == 16 */
 } __attribute__((__packed__)) INDEX_HEADER;
 
+/*
+ * $INDEX_ROOT attribute structure (always resident)
+ * +--------------------------------------------------------------------+
+ * |ATTR_RECORD|INDEX_ROOT(include INDEX_HEADER)|INDEX_ENTRY| | |...
+ * +--------------------------------------------------------------------+
+ */
+
 /**
  * struct INDEX_ROOT - Attribute: Index root (0x90).
  *
@@ -2140,6 +2147,18 @@ typedef struct {
 					   following index entries. */
 /* sizeof()= 32 bytes */
 } __attribute__((__packed__)) INDEX_ROOT;
+
+/*
+ * $INDEX_ALLOCATION attribute structure (always non-resident)
+ * +------------------------------------------------------------------+
+ * |ATTR_RECORD|          data run           |
+ * +------------------------------------------------------------------+
+ *
+ * INDEX_ALLOCATION data structure
+ * +------------------------------------------------------------------+
+ * |INDEX_BLOCK(include INDEX_HEADER)|USN array|INDEX_ENTRY| | |...
+ * +------------------------------------------------------------------+
+ */
 
 /**
  * struct INDEX_BLOCK - Attribute: Index allocation (0xa0).

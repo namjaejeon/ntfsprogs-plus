@@ -3432,12 +3432,15 @@ not_found:
  *
  *	Returns 0 if the checks pass
  *		-1 with errno = EIO otherwise
+ *	Returns 0 and dirty flag set 1, if the repairing is OK
  */
 
-int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref)
+int ntfs_attr_inconsistent(const ntfs_volume *vol, const ATTR_RECORD *a,
+	const MFT_REF mref, BOOL *fixed)
 {
-	const FILE_NAME_ATTR *fn;
-	const INDEX_ROOT *ir;
+	FILE_NAME_ATTR *fn;
+	INDEX_ROOT *ir;
+	ATTR_RECORD *mod_a = (ATTR_RECORD *)a;
 	u64 inum;
 	int ret;
 
@@ -3450,10 +3453,12 @@ int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref)
 	 */
 	ret = 0;
 	inum = MREF(mref);
+
 	if (a->non_resident) {
 		if ((a->non_resident != 1)
 		    || (le32_to_cpu(a->length)
 			< offsetof(ATTR_RECORD, non_resident_end))
+		    || (le16_to_cpu(a->mapping_pairs_offset) & 7)
 		    || (le16_to_cpu(a->mapping_pairs_offset)
 				>= le32_to_cpu(a->length))
 		    || (a->name_length
@@ -3473,6 +3478,7 @@ int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref)
 		if ((le32_to_cpu(a->length)
 			< offsetof(ATTR_RECORD, resident_end))
 		    || (le32_to_cpu(a->value_length) & 0xff000000)
+		    || (le16_to_cpu(a->value_offset) & 7)
 		    || (a->value_length
 			&& ((le16_to_cpu(a->value_offset)
 				+ le32_to_cpu(a->value_length))
@@ -3504,8 +3510,9 @@ int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref)
 		switch(a->type) {
 		case AT_FILE_NAME :
 			/* Check file names are resident and do not overflow */
-			fn = (const FILE_NAME_ATTR*)((const u8*)a
+			fn = (FILE_NAME_ATTR *)((const u8 *)a
 				+ le16_to_cpu(a->value_offset));
+
 			if (a->non_resident
 			    || (le32_to_cpu(a->value_length)
 				< offsetof(FILE_NAME_ATTR, file_name))
@@ -3519,17 +3526,33 @@ int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref)
 				errno = EIO;
 				ret = -1;
 			}
+
+			if (!ret && a->resident_flags != RESIDENT_ATTR_IS_INDEXED &&
+					!(fn->file_attributes & FILE_ATTR_NOT_CONTENT_INDEXED)) {
+				check_failed("$FILE_NAME attribute's flag "
+						"is not set to be indexed\n");
+
+				if (ntfsck_ask_repair(vol)) {
+					errors--;
+					mod_a->resident_flags = RESIDENT_ATTR_IS_INDEXED;
+					*fixed = TRUE;
+				}
+			}
+
 			break;
 		case AT_INDEX_ROOT :
 			/* Check root index is resident and does not overflow */
-			ir = (const INDEX_ROOT*)((const u8*)a +
+			ir = (INDEX_ROOT *)((const u8 *)a +
 				le16_to_cpu(a->value_offset));
+
 			/* index.allocated_size may overflow while resizing */
 			if (a->non_resident
 			    || (le32_to_cpu(a->value_length)
 				< offsetof(INDEX_ROOT, index.reserved))
 			    || (le32_to_cpu(ir->index.entries_offset)
 				< sizeof(INDEX_HEADER))
+			    || (le32_to_cpu(ir->index.index_length) & 7)
+			    || (le32_to_cpu(ir->index.allocated_size) & 7)
 			    || (le32_to_cpu(ir->index.index_length)
 				< le32_to_cpu(ir->index.entries_offset))
 			    || (le32_to_cpu(ir->index.allocated_size)
@@ -3543,6 +3566,22 @@ int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref)
 				errno = EIO;
 				ret = -1;
 			}
+
+			/* Is it needed? */
+			if (!ret && le32_to_cpu(ir->index_block_size) !=
+						vol->indx_record_size) {
+				check_failed("Corrupt index block size(%u %u) "
+						"in MFT record %llu.\n",
+						le32_to_cpu(ir->index_block_size),
+						vol->indx_record_size,
+						(unsigned long long)inum);
+				if (ntfsck_ask_repair(vol)) {
+					errors--;
+					ir->index_block_size = le32_to_cpu(vol->indx_record_size);
+					*fixed = TRUE;
+				}
+			}
+
 			break;
 		case AT_STANDARD_INFORMATION :
 			if (a->non_resident
@@ -3590,6 +3629,7 @@ int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref)
 			}
 			break;
 		case AT_INDEX_ALLOCATION :
+			/* TODO: check index_header's length and allocated size */
 			if (!a->non_resident) {
 				ntfs_log_error("Corrupt index allocation"
 					" in MFT record %lld",
@@ -3597,6 +3637,7 @@ int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref)
 				errno = EIO;
 				ret = -1;
 			}
+			/* TODO: check cluster run list here? or outside? */
 			break;
 		default :
 			break;
