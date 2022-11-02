@@ -322,7 +322,7 @@ u64 ntfs_inode_lookup_by_name(ntfs_inode *dir_ni,
 		
 		/* The file name must not overflow from the entry */
 		rc = ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
-				dir_ni->mft_no);
+				dir_ni->mft_no, NULL);
 		if (rc < 0) {
 			errno = EIO;
 			goto put_err_out;
@@ -444,7 +444,7 @@ descend_into_child_node:
 		
 		/* The file name must not overflow from the entry */
 		rc = ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
-				dir_ni->mft_no);
+				dir_ni->mft_no, NULL);
 		if (rc < 0) {
 			errno = EIO;
 			goto close_err_out;
@@ -1250,7 +1250,7 @@ int ntfs_readdir(ntfs_inode *dir_ni, s64 *pos,
 
 		/* The file name must not overflow from the entry */
 		rc = ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
-				dir_ni->mft_no);
+				dir_ni->mft_no, NULL);
 		if (rc < 0) {
 			errno = EIO;
 			goto dir_err_out;
@@ -1393,7 +1393,7 @@ find_next_index_buffer:
 
 		/* The file name must not overflow from the entry */
 		rc = ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
-				dir_ni->mft_no);
+				dir_ni->mft_no, NULL);
 		if (rc < 0) {
 			errno = EIO;
 			goto dir_err_out;

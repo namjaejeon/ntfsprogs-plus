@@ -555,28 +555,37 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
  */
 
 int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
-			COLLATION_RULES collation_rule, u64 inum)
+			COLLATION_RULES collation_rule, u64 inum,
+			ntfs_index_context *ictx)
 {
 	int ret = 0;
-	BOOL fixed;
 
 	if (!ie)
 		return 0;
 
-	if (ie->ie_flags & INDEX_ENTRY_END)
-		return 0;
+	if (ie->ie_flags & INDEX_ENTRY_NODE && ictx && ictx->ia_na) {
+		VCN vcn = ntfs_ie_get_vcn(ie);
+		s64 data_size = (vcn + 1) << ictx->vcn_size_bits;
+
+		if (data_size > ictx->ia_na->data_size) {
+			check_failed("VCN(%ld) in INDEX NODE exceed data_size of ia attr", vcn);
+			if (ntfsck_ask_repair(vol)) {
+				/*
+				 * data_size of index allocation should be validated
+				 * with cluster run and $BITMAP in previous ntfs_inode_open().
+				 */
+				ie->ie_flags &= ~INDEX_ENTRY_NODE;
+				ie->length = cpu_to_le16(le16_to_cpu(ie->length) - 8);
+				ret = 1;
+				--errors;
+			}
+		}
+	}
 
 	if (ie->ie_flags & INDEX_ENTRY_NODE) {
-#if 0
-		VCN vcn = ie + (le16_to_cpu(ie->length) - 8);
-
-		if (vcn > max) {
-			check_failed("vcn in index node exceed vcn : %ld\n", vcn);
-		}
-#endif
 		if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) !=
 		    (le16_to_cpu(ie->length) - 8)) {
-			check_failed("there is no vcn space for index noded\n");
+			check_failed("there is no vcn space in index node\n");
 			return -1;
 		}
 	}
@@ -593,6 +602,9 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 				return -1;
 		}
 	}
+
+	if (ie->ie_flags & INDEX_ENTRY_END)
+		return 0;
 
 	if (ie->key_length &&
 	    ((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key)) >
@@ -714,7 +726,7 @@ static int ntfs_ie_lookup(const void *key, const int key_len,
 		}
 			/* Make sure key and data do not overflow from entry */
 		rc = ntfs_index_entry_inconsistent(icx->ni->vol, ie, icx->ir->collation_rule,
-				icx->ni->mft_no);
+				icx->ni->mft_no, icx);
 		if (rc < 0) {
 			errno = EIO;
 			return STATUS_ERROR;
@@ -2190,7 +2202,8 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 
 			ictx->entry = ntfs_ie_get_first(&ictx->ib->index);
 			entry = ictx->entry;
-			ret = ntfs_index_entry_inconsistent(ictx->ni->vol, entry, ictx->ir->collation_rule, 0);
+			ret = ntfs_index_entry_inconsistent(ictx->ni->vol, entry,
+					ictx->ir->collation_rule, 0, ictx);
 			if (ret > 0) {
 				ret = ntfsck_write_index_entry(ictx);
 				if (ret)
@@ -2307,7 +2320,7 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 		next = (INDEX_ENTRY*)((char*)ie + le16_to_cpu(ie->length));
 		++ictx->parent_pos[ictx->pindex];
 
-		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0);
+		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
 		if (ret > 0) {
 			ret = ntfsck_write_index_entry(ictx);
 			if (ret)
@@ -2333,7 +2346,7 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 	if (next && (next->ie_flags & INDEX_ENTRY_END))
 		next = (INDEX_ENTRY*)NULL;
 	else {
-		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0);
+		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
 		if (ret > 0) {
 			ret = ntfsck_write_index_entry(ictx);
 			if (ret)

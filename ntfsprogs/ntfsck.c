@@ -809,7 +809,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		next = (INDEX_ENTRY*)((u8*)&ir->index +
 				le32_to_cpu(ir->index.entries_offset));
 
-		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0);
+		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
 		if (ret > 0) {
 			ret = ntfsck_write_index_entry(ictx);
 			if (ret)

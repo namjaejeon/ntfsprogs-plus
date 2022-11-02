@@ -142,7 +142,8 @@ extern void ntfs_index_ctx_reinit(ntfs_index_context *ictx);
 extern int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 		INDEX_BLOCK *ib, u32 block_size, u64 inum, VCN vcn);
 extern int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
-			COLLATION_RULES collation_rule, u64 inum);
+			COLLATION_RULES collation_rule, u64 inum,
+			ntfs_index_context *ictx);
 extern int ntfs_index_lookup(const void *key, const int key_len,
 		ntfs_index_context *ictx) __attribute_warn_unused_result__;
 
