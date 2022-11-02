@@ -120,6 +120,17 @@ static struct {
 	ntfs_mount_flags flags;
 } option;
 
+struct dir {
+	struct ntfs_list_head list;
+	ntfs_inode *ni;
+};
+
+struct ntfsls_dirent {
+	ntfs_volume *vol;
+};
+
+NTFS_LIST_HEAD(ntfs_dirs_list);
+
 int parse_count = 1;
 
 /**
@@ -353,11 +364,45 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	is_used = ntfs_bit_get(fsck_mft_bmp, mft_num);
 	if (!is_used) {
-		check_failed("Found an orphaned file(mft no: %ld). Fix",
+		check_failed("Found an orphaned file(mft no: %ld). Try to add index entry",
 				mft_num);
 		if (ntfsck_ask_repair(vol)) {
-			/* FIXME: Should we remove each attributes here in mft entry ? */
+			ntfs_attr_search_ctx *ctx;
+			FILE_NAME_ATTR *fn;
+			ntfs_inode *parent_ni = NULL;
+			u64 inum;
 
+			ctx = ntfs_attr_get_search_ctx(ni, NULL);
+
+			if (ctx && !ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+						     CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+				/* We know this will always be resident. */
+				fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+						le16_to_cpu(ctx->attr->value_offset));
+
+				inum = le64_to_cpu(fn->parent_directory);
+				if (inum != (u64)-1)
+					parent_ni = ntfs_inode_open(vol, MREF(inum));
+
+				if (parent_ni) {
+					int err;
+
+					err = ntfs_index_add_filename(parent_ni,
+						fn, MK_MREF(ni->mft_no,
+						le16_to_cpu(ni->mrec->sequence_number)));
+					ntfs_inode_close(parent_ni);
+					if (!err) {
+						errors--;
+						ntfs_attr_put_search_ctx(ctx);
+						goto update_lcn_bitmap;
+					}
+				}
+			}
+
+			if (ctx)
+				ntfs_attr_put_search_ctx(ctx);
+
+			/* TODO: Move orphan mft entry to lost+found directory */
 			while (ni->nr_extents)
 				if (ntfs_mft_record_free(vol, *(ni->extent_nis))) {
 					ntfs_log_error("Failed to free extent MFT record.  "
@@ -371,6 +416,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		}
 	}
 
+update_lcn_bitmap:
 	/*
 	 * Update number of clusters that is used for each non-resident mft entries to
 	 * bitmap.
@@ -473,18 +519,6 @@ void ntfsck_debug_print_fn_attr(ntfs_attr_search_ctx *actx,
 	return;
 }
 #endif
-
-struct dir {
-	struct ntfs_list_head list;
-	ntfs_inode *ni;
-};
-
-struct ntfsls_dirent {
-	ntfs_volume *vol;
-};
-
-NTFS_LIST_HEAD(ntfs_dirs_list);
-
 
 /*
  * check $FILE_NAME attribute in directory index and same one in MFT entry
