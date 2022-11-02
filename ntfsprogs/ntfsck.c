@@ -812,8 +812,10 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
 		if (ret > 0) {
 			ret = ntfsck_write_index_entry(ictx);
-			if (ret)
+			if (ret) {
+				errors++;
 				goto err_out;
+			}
 		}
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			ictx->ia_na= ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
