@@ -1543,7 +1543,7 @@ static VCN ntfs_icx_parent_pos(ntfs_index_context *icx)
 	return icx->parent_pos[icx->pindex];
 }
 
-int ntfsck_write_index_entry(ntfs_index_context *ictx)
+int ntfsck_update_index_entry(ntfs_index_context *ictx)
 {
 	ntfs_log_verbose("Update index entry to disk\n");
 
@@ -2205,7 +2205,7 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 			ret = ntfs_index_entry_inconsistent(ictx->ni->vol, entry,
 					ictx->ir->collation_rule, 0, ictx);
 			if (ret > 0) {
-				ret = ntfsck_write_index_entry(ictx);
+				ret = ntfsck_update_index_entry(ictx);
 				if (ret) {
 					errors++;
 					entry = NULL;
@@ -2324,7 +2324,7 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 
 		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
 		if (ret > 0) {
-			ret = ntfsck_write_index_entry(ictx);
+			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
 				errors++;
 				return NULL;
@@ -2352,7 +2352,7 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 	else {
 		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
 		if (ret > 0) {
-			ret = ntfsck_write_index_entry(ictx);
+			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
 				errors++;
 				next = (INDEX_ENTRY*)NULL;

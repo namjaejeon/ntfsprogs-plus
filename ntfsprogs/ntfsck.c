@@ -545,9 +545,9 @@ remove_index:
 			ntfs_log_error("Failed to remove index entry, mft-no : %ld",
 					MREF(mref));
 		else {
-			ret = ntfsck_write_index_entry(ictx);
+			ret = ntfsck_update_index_entry(ictx);
 			if (ret)
-				ntfs_log_error("ntfsck_write_index_entry failed. ret : %d\n", ret);
+				ntfs_log_error("ntfsck_update_index_entry failed. ret : %d\n", ret);
 		}
 
 		if (first_fn) {
@@ -648,7 +648,7 @@ fix_index:
 
 			/* CHECK: copy all MFT/$FN field to IDX/$FN */
 			memcpy(ie_fn, fn, sizeof(FILE_NAME_ATTR) - sizeof(ntfschar));
-			ret = ntfsck_write_index_entry(ictx);
+			ret = ntfsck_update_index_entry(ictx);
 			if (!ret)
 				errors--;
 		}
@@ -811,7 +811,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
 		if (ret > 0) {
-			ret = ntfsck_write_index_entry(ictx);
+			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
 				errors++;
 				goto err_out;
