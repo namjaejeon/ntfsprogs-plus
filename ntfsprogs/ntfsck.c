@@ -320,6 +320,91 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 	return 0;
 }
 
+static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, s64 mft_no)
+{
+	ntfs_attr_search_ctx *ctx;
+	FILE_NAME_ATTR *fn;
+	ntfs_inode *parent_ni = NULL, *ni;
+	u64 parent_no;
+	struct orphan_mft {
+		s64 mft_no;
+		struct ntfs_list_head list;
+	};
+	NTFS_LIST_HEAD(ntfs_orphan_list);
+	struct orphan_mft *of;
+	int err = 0;
+
+stack_of:
+	of = (struct orphan *)calloc(1, sizeof(struct orphan_mft));
+	if (!of)
+		return -ENOMEM;
+
+	of->mft_no = mft_no;
+	ntfs_list_add(&of->list, &ntfs_orphan_list);
+
+	while (!ntfs_list_empty(&ntfs_orphan_list)) {
+		of = ntfs_list_entry(ntfs_orphan_list.next, struct orphan_mft, list);
+
+		if (err) {
+			ntfs_list_del(&of->list);
+			free(of);
+			continue;
+		}
+
+		ni = ntfs_inode_open(vol, of->mft_no);
+		if (!ni) {
+			ntfs_list_del(&of->list);
+			free(of);
+			err = -EIO;
+			continue;
+		}
+
+		ctx = ntfs_attr_get_search_ctx(ni, NULL);
+		if (ctx && !ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+					     CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+			/* We know this will always be resident. */
+			fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+					le16_to_cpu(ctx->attr->value_offset));
+
+			parent_no = le64_to_cpu(fn->parent_directory);
+
+			/*
+			 * Consider that the parent could be orphaned.
+			 */
+			if (!ntfs_bit_get(fsck_mft_bmp, MREF(parent_no))) {
+				if (utils_mftrec_in_use(vol, MREF(parent_no))) {
+					ntfs_attr_put_search_ctx(ctx);
+					ntfs_inode_close(ni);
+					mft_no = MREF(parent_no);
+					goto stack_of;
+				}
+			}
+
+			if (parent_no != (u64)-1)
+				parent_ni = ntfs_inode_open(vol, MREF(parent_no));
+
+			if (parent_ni) {
+				err = ntfs_index_add_filename(parent_ni,
+							      fn, MK_MREF(ni->mft_no,
+							      le16_to_cpu(ni->mrec->sequence_number)));
+				ntfs_inode_close(parent_ni);
+				if (err)
+					ntfs_log_error("ntfs_index_add_filename failed, err : %d\n", err);
+				else
+					ntfs_bit_set(fsck_mft_bmp, MREF(parent_no), 1);
+			}
+		}
+
+		ntfs_list_del(&of->list);
+		free(of);
+		if (ctx)
+			ntfs_attr_put_search_ctx(ctx);
+		ntfs_inode_close(ni);
+	}
+
+	return err;
+}
+
 static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	int is_used;
@@ -367,40 +452,8 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		check_failed("Found an orphaned file(mft no: %ld). Try to add index entry",
 				mft_num);
 		if (ntfsck_ask_repair(vol)) {
-			ntfs_attr_search_ctx *ctx;
-			FILE_NAME_ATTR *fn;
-			ntfs_inode *parent_ni = NULL;
-			u64 inum;
-
-			ctx = ntfs_attr_get_search_ctx(ni, NULL);
-
-			if (ctx && !ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-						     CASE_SENSITIVE, 0, NULL, 0, ctx)) {
-				/* We know this will always be resident. */
-				fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
-						le16_to_cpu(ctx->attr->value_offset));
-
-				inum = le64_to_cpu(fn->parent_directory);
-				if (inum != (u64)-1)
-					parent_ni = ntfs_inode_open(vol, MREF(inum));
-
-				if (parent_ni) {
-					int err;
-
-					err = ntfs_index_add_filename(parent_ni,
-						fn, MK_MREF(ni->mft_no,
-						le16_to_cpu(ni->mrec->sequence_number)));
-					ntfs_inode_close(parent_ni);
-					if (!err) {
-						errors--;
-						ntfs_attr_put_search_ctx(ctx);
-						goto update_lcn_bitmap;
-					}
-				}
-			}
-
-			if (ctx)
-				ntfs_attr_put_search_ctx(ctx);
+			if (!ntfsck_add_index_entry_orphaned_file(vol, ni->mft_no))
+				goto update_lcn_bitmap;
 
 			/* TODO: Move orphan mft entry to lost+found directory */
 			while (ni->nr_extents)
@@ -422,7 +475,6 @@ update_lcn_bitmap:
 	 * bitmap.
 	 */
 	ntfsck_update_lcn_bitmap(ni);
-
 	ntfs_inode_close(ni);
 }
 
