@@ -387,11 +387,18 @@ stack_of:
 				err = ntfs_index_add_filename(parent_ni,
 							      fn, MK_MREF(ni->mft_no,
 							      le16_to_cpu(ni->mrec->sequence_number)));
-				ntfs_inode_close(parent_ni);
-				if (err)
+				if (err) {
 					ntfs_log_error("ntfs_index_add_filename failed, err : %d\n", err);
-				else
+					ntfs_inode_close(parent_ni);
+				} else {
 					ntfs_bit_set(fsck_mft_bmp, ni->mft_no, 1);
+					/*
+					 * Recall ntfsck_update_lcn_bitmap() about parent_ni.
+					 * Because cluster can be allocated by adding index entry.
+					 */
+					ntfsck_update_lcn_bitmap(parent_ni);
+					ntfs_inode_close(parent_ni);
+				}
 			}
 		}
 
