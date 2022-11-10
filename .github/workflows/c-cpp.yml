@@ -1,0 +1,27 @@
+name: ntfsprogs test CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: install packages
+      run: sudo apt-get install libgcrypt20-dev
+    - name: build ntfsprogs
+      run: |
+        ./autogen.sh
+        ./configure
+        make
+        sudo make install
+    - name: check ntfs test images
+      run: |
+        cd tests
+        ./test_fsck.sh
