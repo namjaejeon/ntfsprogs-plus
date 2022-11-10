@@ -540,6 +540,19 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 	return (0);
 }
 
+static ntfs_attr *ntfs_ia_open(ntfs_index_context *icx, ntfs_inode *ni)
+{
+	ntfs_attr *na;
+
+	na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, icx->name, icx->name_len);
+	if (!na) {
+		ntfs_log_perror("Failed to open index allocation of inode "
+				"%llu", (unsigned long long)ni->mft_no);
+		return NULL;
+	}
+
+	return na;
+}
 
 /*
  *		Check the consistency of an index entry
@@ -563,9 +576,15 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (!ie)
 		return 0;
 
-	if (ie->ie_flags & INDEX_ENTRY_NODE && ictx && ictx->ia_na) {
+	if (ie->ie_flags & INDEX_ENTRY_NODE && ictx) {
 		VCN vcn = ntfs_ie_get_vcn(ie);
 		s64 data_size = (vcn + 1) << ictx->vcn_size_bits;
+
+		if (!ictx->ia_na) {
+			ictx->ia_na = ntfs_ia_open(ictx, ictx->ni);
+			if (!ictx->ia_na)
+				return 0;
+		}
 
 		if (data_size > ictx->ia_na->data_size) {
 			check_failed("VCN(%ld) in INDEX NODE exceed data_size of ia attr", vcn);
@@ -723,6 +742,15 @@ static int ntfs_ie_lookup(const void *key, const int key_len,
 				       (unsigned long long)icx->ni->mft_no);
 			return STATUS_ERROR;
 		}
+
+		/* Make sure key and data do not overflow from entry */
+		rc = ntfs_index_entry_inconsistent(icx->ni->vol, ie, icx->ir->collation_rule,
+				icx->ni->mft_no, icx);
+		if (rc < 0) {
+			errno = EIO;
+			return STATUS_ERROR;
+		}
+
 		/*
 		 * The last entry cannot contain a key.  It can however contain
 		 * a pointer to a child node in the B+tree so we just break out.
@@ -738,13 +766,7 @@ static int ntfs_ie_lookup(const void *key, const int key_len,
 			errno = EOPNOTSUPP;
 			return STATUS_ERROR;
 		}
-			/* Make sure key and data do not overflow from entry */
-		rc = ntfs_index_entry_inconsistent(icx->ni->vol, ie, icx->ir->collation_rule,
-				icx->ni->mft_no, icx);
-		if (rc < 0) {
-			errno = EIO;
-			return STATUS_ERROR;
-		}
+
 		rc = icx->collate(icx->ni->vol, key, key_len,
 					&ie->key, le16_to_cpu(ie->key_length));
 		if (rc == NTFS_COLLATION_ERROR) {
@@ -795,20 +817,6 @@ static int ntfs_ie_lookup(const void *key, const int key_len,
 	icx->parent_pos[icx->pindex] = item;
 	
 	return STATUS_KEEP_SEARCHING;
-}
-
-static ntfs_attr *ntfs_ia_open(ntfs_index_context *icx, ntfs_inode *ni)
-{
-	ntfs_attr *na;
-	
-	na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, icx->name, icx->name_len);
-	if (!na) {
-		ntfs_log_perror("Failed to open index allocation of inode "
-				"%llu", (unsigned long long)ni->mft_no);
-		return NULL;
-	}
-	
-	return na;
 }
 
 static int ntfs_ib_read(ntfs_index_context *icx, VCN vcn, INDEX_BLOCK *dst)

@@ -897,14 +897,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		next = (INDEX_ENTRY*)((u8*)&ir->index +
 				le32_to_cpu(ir->index.entries_offset));
 
-		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
-		if (ret > 0) {
-			ret = ntfsck_update_index_entry(ictx);
-			if (ret) {
-				errors++;
-				goto err_out;
-			}
-		}
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			ictx->ia_na= ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
 						    ictx->name, ictx->name_len);
@@ -913,11 +905,22 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 						"%llu", (unsigned long long)dir->ni->mft_no);
 				ntfs_attr_put_search_ctx(ctx);
 				goto err_out;
-			} else {
-				next = ntfs_index_walk_down(next, ictx);
-				if (!next)
-					goto next_dir;
 			}
+		}
+
+		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
+		if (ret > 0) {
+			ret = ntfsck_update_index_entry(ictx);
+			if (ret) {
+				errors++;
+				goto err_out;
+			}
+		}
+
+		if (next->ie_flags & INDEX_ENTRY_NODE) {
+			next = ntfs_index_walk_down(next, ictx);
+			if (!next)
+				goto next_dir;
 		}
 
 		if (!(next->ie_flags & INDEX_ENTRY_END))
