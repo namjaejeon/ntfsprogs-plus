@@ -452,8 +452,10 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		check_failed("Found an orphaned file(mft no: %ld). Try to add index entry",
 				mft_num);
 		if (ntfsck_ask_repair(vol)) {
-			if (!ntfsck_add_index_entry_orphaned_file(vol, ni->mft_no))
+			if (!ntfsck_add_index_entry_orphaned_file(vol, ni->mft_no)) {
+				errors--;
 				goto update_lcn_bitmap;
+			}
 
 			/* TODO: Move orphan mft entry to lost+found directory */
 			while (ni->nr_extents)
