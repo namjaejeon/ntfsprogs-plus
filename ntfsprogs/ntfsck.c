@@ -391,7 +391,7 @@ stack_of:
 				if (err)
 					ntfs_log_error("ntfs_index_add_filename failed, err : %d\n", err);
 				else
-					ntfs_bit_set(fsck_mft_bmp, MREF(parent_no), 1);
+					ntfs_bit_set(fsck_mft_bmp, ni->mft_no, 1);
 			}
 		}
 
