@@ -609,6 +609,9 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 				for (; vcn_idx >= end_vcn_idx; vcn_idx--)
 					ntfs_ibm_modify(ictx, vcn_idx, 0);
 
+				if (ictx->ia_na->data_size == 0)
+					ictx->ir->index.ih_flags = SMALL_INDEX;
+
 				ret = 1;
 				--errors;
 			}
