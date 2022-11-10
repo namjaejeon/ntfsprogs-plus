@@ -570,12 +570,26 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 		if (data_size > ictx->ia_na->data_size) {
 			check_failed("VCN(%ld) in INDEX NODE exceed data_size of ia attr", vcn);
 			if (ntfsck_ask_repair(vol)) {
+				VCN vcn_idx, end_vcn_idx;
+
 				/*
 				 * data_size of index allocation should be validated
 				 * with cluster run and $BITMAP in previous ntfs_inode_open().
 				 */
 				ie->ie_flags &= ~INDEX_ENTRY_NODE;
 				ie->length = cpu_to_le16(le16_to_cpu(ie->length) - 8);
+
+				/*
+				 * Clear cluster bit in $BITMAP as much as the difference
+				 * between data_size that cacludated with index node vcn
+				 * number and ia_na->data_size.
+				 */
+				vcn_idx = ((data_size + ictx->ir->index_block_size - 1) /
+						ictx->ir->index_block_size) - 1;
+				end_vcn_idx = ictx->ia_na->data_size / 8;
+				for (; vcn_idx >= end_vcn_idx; vcn_idx--)
+					ntfs_ibm_modify(ictx, vcn_idx, 0);
+
 				ret = 1;
 				--errors;
 			}
@@ -1106,7 +1120,7 @@ static int ntfs_ibm_add(ntfs_index_context *icx)
 	return STATUS_OK;
 }
 
-static int ntfs_ibm_modify(ntfs_index_context *icx, VCN vcn, int set)
+int ntfs_ibm_modify(ntfs_index_context *icx, VCN vcn, int set)
 {
 	u8 byte;
 	s64 pos = ntfs_ibm_vcn_to_pos(icx, vcn);

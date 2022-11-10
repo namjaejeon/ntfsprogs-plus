@@ -175,6 +175,7 @@ extern int ntfs_index_rm(ntfs_index_context *icx);
 
 int ntfs_ib_write(ntfs_index_context *icx, INDEX_BLOCK *ib);
 int ntfsck_update_index_entry(ntfs_index_context *ictx);
+int ntfs_ibm_modify(ntfs_index_context *icx, VCN vcn, int set);
 
 #endif /* _NTFS_INDEX_H */
 
