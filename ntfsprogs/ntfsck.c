@@ -337,7 +337,7 @@ static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, s64 mft_no)
 	int err = 0;
 
 stack_of:
-	of = (struct orphan *)calloc(1, sizeof(struct orphan_mft));
+	of = (struct orphan_mft *)calloc(1, sizeof(struct orphan_mft));
 	if (!of)
 		return -ENOMEM;
 
