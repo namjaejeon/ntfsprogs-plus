@@ -317,6 +317,8 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 		free(rl);
 	}
 
+	ntfs_attr_put_search_ctx(actx);
+
 	return 0;
 }
 
