@@ -807,7 +807,8 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 			dir->ni = ni;
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
-		}
+		} else
+			ntfs_inode_close(ni);
 	} else {
 		check_failed("mft entry(%ld) is corrupted, Removing index entry", MREF(mref));
 		if (ntfsck_ask_repair(vol)) {
