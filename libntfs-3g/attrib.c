@@ -5605,7 +5605,7 @@ int ntfs_attr_force_non_resident(ntfs_attr *na)
  *	    We expect the caller to do this as this is a fairly low level
  *	    function and it is likely there will be further changes made.
  */
-static int ntfs_attr_make_resident(ntfs_attr *na, ntfs_attr_search_ctx *ctx)
+int ntfs_attr_make_resident(ntfs_attr *na, ntfs_attr_search_ctx *ctx)
 {
 	ntfs_volume *vol = na->ni->vol;
 	ATTR_REC *a = ctx->attr;
@@ -6341,7 +6341,7 @@ int ntfs_attr_update_mapping_pairs(ntfs_attr *na, VCN from_vcn)
  *	ENOMEM	- Not enough memory to complete operation.
  *	ERANGE	- @newsize is not valid for the attribute type of @na.
  */
-static int ntfs_non_resident_attr_shrink(ntfs_attr *na, const s64 newsize)
+int ntfs_non_resident_attr_shrink(ntfs_attr *na, const s64 newsize)
 {
 	ntfs_volume *vol;
 	ntfs_attr_search_ctx *ctx;

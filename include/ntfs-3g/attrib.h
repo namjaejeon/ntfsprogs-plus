@@ -399,6 +399,8 @@ extern int ntfs_attr_data_write(ntfs_inode *ni,
 extern int ntfs_attr_shrink_size(ntfs_inode *ni, ntfschar *stream_name,
 		int stream_name_len, off_t offset);
 extern int ntfs_attr_inconsistent(const ATTR_RECORD *a, const MFT_REF mref);
+extern int ntfs_attr_make_resident(ntfs_attr *na, ntfs_attr_search_ctx *ctx);
+extern int ntfs_non_resident_attr_shrink(ntfs_attr *na, const s64 newsize);
 
 #endif /* defined _NTFS_ATTRIB_H */
 

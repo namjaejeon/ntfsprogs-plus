@@ -48,6 +48,7 @@
 #include "utils.h"
 #include "list.h"
 #include "dir.h"
+#include "lcnalloc.h"
 
 #define RETURN_FS_ERRORS_CORRECTED (1)
 #define RETURN_SYSTEM_NEEDS_REBOOT (2)
@@ -761,6 +762,216 @@ fix_index:
 
 }
 
+static int ntfsck_check_non_resident_data_size(ntfs_inode *ni)
+{
+	ntfs_volume *vol;
+	ntfs_attr_search_ctx *actx;
+	s64 lcn_data_size;
+
+	/*
+	 * data and initialized size is stranged in $BadClus.
+	 * For now, Skip checking system metadata files.
+	 */
+	if (!ni || ni->mft_no < FILE_first_user)
+		return 0;
+
+	vol = ni->vol;
+
+retry:
+	actx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!actx)
+		return -ENOMEM;
+
+	while (!ntfs_attrs_walk(actx)) {
+		runlist *rl;
+		VCN i = 0;
+		s64 data_size, alloc_size, init_size, newsize, align_data_size;
+		ntfs_attr *na;
+
+		if (!actx->attr->non_resident)
+			continue;
+
+		lcn_data_size = 0;
+		rl = ntfs_mapping_pairs_decompress(ni->vol, actx->attr,
+				NULL);
+		if (!rl) {
+			ntfs_log_error("Failed to decompress runlist.  Leaving inconsistent metadata.\n");
+			continue;
+		}
+
+		while (rl[i].length) {
+			if (rl[i].lcn > (LCN)LCN_HOLE) {
+				ntfs_log_verbose("Cluster run of mft entry(%ld), vcn : %ld, lcn : %ld, length : %ld\n",
+						ni->mft_no, i, rl[i].lcn, rl[i].length);
+				lcn_data_size += ni->vol->cluster_size * rl[i].length;
+			}
+
+			++i;
+		}
+
+		free(rl);
+
+		switch (actx->attr->type) {
+		case AT_DATA:
+			na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+			break;
+		case AT_INDEX_ALLOCATION:
+			na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
+			break;
+		case AT_BITMAP:
+			na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+			break;
+		default:
+			ntfs_log_error("No check sizes of non-resident that had 0x%x type of attribute.\n",
+					actx->attr->type);
+			continue;
+		}
+
+		if (!na) {
+			ntfs_log_error("Can't not open 0x%x attribute from mft(%ld) entry\n",
+					actx->attr->type, ni->mft_no);
+			continue;
+		}
+
+		data_size = le64_to_cpu(actx->attr->data_size);
+		init_size = le64_to_cpu(actx->attr->initialized_size);
+		alloc_size = le64_to_cpu(actx->attr->allocated_size);
+
+		ntfs_log_verbose("MFT no : %ld, type : %x, data_size %ld, allocated_size %ld, initialize_size : %ld, lcn_bmp_data_size : %ld\n",
+			ni->mft_no, actx->attr->type, data_size, alloc_size, init_size, lcn_data_size);
+
+
+		/*
+		 * Reset non-resident if sizes are invalid,
+		 * And then make it resident attribute.
+		 */
+		if (data_size != init_size || alloc_size != lcn_data_size ||
+		    data_size > alloc_size) {
+			newsize = 0;
+		} else {
+			align_data_size = (data_size + vol->cluster_size - 1) & ~(vol->cluster_size - 1);
+			if (align_data_size == alloc_size)
+				goto close_na;
+			newsize = data_size;
+			alloc_size = align_data_size;
+		}
+
+		ntfs_log_verbose("truncate new_size : %ld\n", newsize);
+
+		if (actx->attr->type == AT_DATA) {
+			if (!newsize) {
+				na->data_size = 0;
+				na->initialized_size = 0;
+			}
+
+			if (ntfs_non_resident_attr_shrink(na, newsize))
+				goto close_na;
+		} else {
+			check_failed("Sizes of index allocation is corrupted, Removing and recreating attribute");
+			if (ntfsck_ask_repair(vol)) {
+				ntfs_attr *rm_na, *ir_na;
+				u8 bmp[8];
+				int ret;
+
+				/*
+				 * Remove both ia attr and bitmap attr and recreate them.
+				 */
+				if (ntfs_attr_rm(na)) {
+					ntfs_log_error("Failed to remove 0x%x attribute, mft-no : %ld\n", na->type, ni->mft_no);
+					goto close_na;
+				}
+
+				if (actx->attr->type == AT_INDEX_ALLOCATION) {
+					rm_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
+					if (!rm_na) {
+						ntfs_log_error("Can't not open $IA attribute from mft(%ld) entry\n",
+								ni->mft_no);
+						goto close_na;
+					}
+				} else if (actx->attr->type == AT_BITMAP) {
+					rm_na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+					if (!rm_na) {
+						ntfs_log_error("Can't not open $BITMAP attribute from mft(%ld) entry\n",
+								ni->mft_no);
+						goto close_na;
+					}
+				} else
+					goto close_na;
+
+				if (ntfs_attr_rm(rm_na)) {
+					ntfs_log_error("Failed to remove 0x%x attribute, mft-no : %ld\n",
+							rm_na->type, ni->mft_no);
+					ntfs_attr_close(rm_na);
+					goto close_na;
+				}
+				ntfs_attr_close(rm_na);
+
+				ir_na = ntfs_attr_open(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4);
+				if (!ir_na) {
+					ntfs_log_error("Can't not open $IR attribute from mft(%ld) entry\n",
+							ni->mft_no);
+					goto close_na;
+				}
+
+				ret = ntfs_attr_truncate(ir_na, sizeof(INDEX_ROOT) + sizeof(INDEX_ENTRY_HEADER));
+				if (ret == STATUS_OK) {
+					INDEX_ROOT *ir;
+					INDEX_ENTRY *ie;
+					int index_len = sizeof(INDEX_HEADER) + sizeof(INDEX_ENTRY_HEADER);
+
+					ir = ntfs_ir_lookup2(ni, NTFS_INDEX_I30, 4);
+					if (!ir)
+						goto close_na;
+
+					ir->index.allocated_size = cpu_to_le32(index_len);
+					ir->index.index_length = cpu_to_le32(index_len);
+					ir->index.entries_offset = const_cpu_to_le32(sizeof(INDEX_HEADER));
+					ir->index.ih_flags = SMALL_INDEX;
+					ie = (INDEX_ENTRY *)((u8 *)ir + sizeof(INDEX_ROOT));
+					ie->length = cpu_to_le16(sizeof(INDEX_ENTRY_HEADER));
+					ie->key_length = 0;
+					ie->ie_flags = INDEX_ENTRY_END;
+				} else if (ret == STATUS_ERROR) {
+					ntfs_log_perror("Failed to truncate INDEX_ROOT");
+					goto close_na;
+				}
+
+				ntfs_attr_close(ir_na);
+
+				/*
+				 * Recreate both $BITMAP attr and $IA attr.
+				 * All entries in this directory will be
+				 * orphaned and they will be revived when
+				 * checking orphaned entries under parse.
+				 */
+				memset(bmp, 0, sizeof(bmp));
+				if (ntfs_attr_add(ni, AT_BITMAP, NTFS_INDEX_I30, 4,
+						bmp, sizeof(bmp))) {
+					ntfs_log_perror("Failed to add AT_BITMAP");
+					goto close_na;
+				}
+
+				if (ntfs_attr_add(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4,
+						NULL, 0)) {
+					ntfs_log_perror("Failed to add AT_INDEX_ALLOCATION");
+					goto close_na;
+				}
+				ntfs_attr_put_search_ctx(actx);
+				ntfs_inode_mark_dirty(ni);
+				errors--;
+				goto retry;
+			}
+		}
+close_na:
+		ntfs_attr_close(na);
+	}
+	ntfs_attr_put_search_ctx(actx);
+
+	return 0;
+}
+
+
+
 static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 			       ntfs_index_context *ictx)
 {
@@ -778,7 +989,8 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 	ntfs_log_verbose("%ld, %s\n", MREF(mref), filename);
 	ni = ntfs_inode_open(vol, MREF(mref));
-	if (ni) {
+	ret = ntfsck_check_non_resident_data_size(ni);
+	if (!ret && ni) {
 		if (MREF(mref) >> 3 > fsck_mft_bmp_size) {
 			s64 off = fsck_mft_bmp_size;
 

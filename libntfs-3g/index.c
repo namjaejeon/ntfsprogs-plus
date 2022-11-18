@@ -422,7 +422,7 @@ err_out:
 	return ir;
 }
 
-static INDEX_ROOT *ntfs_ir_lookup2(ntfs_inode *ni, ntfschar *name, u32 len)
+INDEX_ROOT *ntfs_ir_lookup2(ntfs_inode *ni, ntfschar *name, u32 len)
 {
 	ntfs_attr_search_ctx *ctx;
 	INDEX_ROOT *ir;
