@@ -231,16 +231,19 @@ int ntfs_mft_records_write(const ntfs_volume *vol, const MFT_REF mref,
  *		-1 with errno = EIO otherwise
  */
 
-int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref, 
+int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 			  MFT_RECORD *m)
-{			  
+{
 	ATTR_RECORD *a;
 	ATTR_TYPES previous_type;
 	int ret = -1;
-	u32 offset;
+	u32 offset;	/* attribute start offset */
+	u32 min_offset;	/* minimum attribute start offset */
+	u32 biu;	/* bytes_in_use */
 	s32 space;
 	BOOL fixed = FALSE;
-	
+
+	/* check magic number of mft */
 	if (!ntfs_is_file_record(m->magic)) {
 		if (!NVolNoFixupWarn(vol))
 			ntfs_log_error("Record %llu has no FILE magic (0x%x)\n",
@@ -256,6 +259,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 			goto err_out;
 	}
 
+	/* check allocated size */
 	if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size) {
 		ntfs_log_error("Record %llu has corrupt allocation size "
 			       "(%u <> %u)\n", (unsigned long long)MREF(mref),
@@ -269,21 +273,44 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		} else
 			goto err_out;
 	}
-	if (!NVolNoFixupWarn(vol)
-	    && (le32_to_cpu(m->bytes_in_use) > vol->mft_record_size)) {
-		ntfs_log_error("Record %llu has corrupt in-use size "
-			       "(%u > %u)\n", (unsigned long long)MREF(mref),
-			       (int)le32_to_cpu(m->bytes_in_use),
-			       (int)vol->mft_record_size);
+
+	/* check bytes_in_use is aligned */
+	biu = le32_to_cpu(m->bytes_in_use);
+	if (biu & 7) {
+		ntfs_log_error("Used size of MFT record is badly aligned "
+				"in record %llu\n",
+			       (unsigned long long)MREF(mref));
 		goto err_out;
 	}
-	if (le16_to_cpu(m->attrs_offset) & 7) {
+
+	/* check used size overflow */
+	if (!NVolNoFixupWarn(vol) && (biu > vol->mft_record_size)) {
+		ntfs_log_error("Record %llu has corrupt in-use size "
+			       "(%u > %u)\n", (unsigned long long)MREF(mref),
+			       (int)biu, (int)vol->mft_record_size);
+		goto err_out;
+	}
+
+	offset = le16_to_cpu(m->attrs_offset);
+	min_offset = ((le16_to_cpu(m->usa_ofs) +
+			le16_to_cpu(m->usa_count) * 2) + 7) & ~7;
+
+	/* check alignment of attribute start offset */
+	if (offset & 7) {
 		ntfs_log_error("Attributes badly aligned in record %llu\n",
 			       (unsigned long long)MREF(mref));
 		goto err_out;
 	}
 
-	a = (ATTR_RECORD *)((char *)m + le16_to_cpu(m->attrs_offset));
+	if (offset < min_offset) {
+		ntfs_log_error("MFT record(%llu)'s attribute start offset "
+				"is corrupted\n",
+				(unsigned long long)MREF(mref));
+		goto err_out;
+	}
+
+	/* check attribute start offset overflow */
+	a = (ATTR_RECORD *)((char *)m + offset);
 	if (p2n(a) < p2n(m) || (char *)a > (char *)m + vol->mft_record_size) {
 		ntfs_log_error("Record %llu is corrupt\n",
 			       (unsigned long long)MREF(mref));
@@ -291,16 +318,17 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	}
 
 	if (!NVolNoFixupWarn(vol)) {
-		offset = le16_to_cpu(m->attrs_offset);
-		space = le32_to_cpu(m->bytes_in_use) - offset;
+		space = biu - offset;
 		a = (ATTR_RECORD*)((char*)m + offset);
 		previous_type = AT_STANDARD_INFORMATION;
+
+		/* check all attributes inconsistency */
 		while ((space >= (s32)offsetof(ATTR_RECORD, resident_end))
 		    && (a->type != AT_END)
 		    && (le32_to_cpu(a->type) >= le32_to_cpu(previous_type))) {
 			if ((le32_to_cpu(a->length) <= (u32)space)
 			    && !(le32_to_cpu(a->length) & 7)) {
-				if (!ntfs_attr_inconsistent(a, mref)) {
+				if (!ntfs_attr_inconsistent(vol, a, mref, &fixed)) {
 					previous_type = a->type;
 					offset += le32_to_cpu(a->length);
 					space -= le32_to_cpu(a->length);
@@ -313,14 +341,21 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 				goto err_out;
 			}
 		}
-			/* We are supposed to reach an AT_END */
-		if ((space < 4) || (a->type != AT_END)) {
-			ntfs_log_error("Bad end of MFT record %llu\n",
-				       (unsigned long long)MREF(mref));
-			goto err_out;
+		/* TODO: if attribute order is corrupted, fix it here? */
+
+		/*
+		 * We are supposed to reach an AT_END. Check bytes_in_use value
+		 */
+		if ((a->type == AT_END) && (biu != offset + space)) {
+			check_failed("Bad end of MFT record %llu ",
+					(unsigned long long)MREF(mref));
+			if (ntfsck_ask_repair(vol)) {
+				m->bytes_in_use = cpu_to_le32(offset + space);
+				fixed = TRUE;
+			}
 		}
 	}
-	
+
 	ret = 0;
 err_out:
 
@@ -391,9 +426,8 @@ int ntfs_file_record_read(const ntfs_volume *vol, const MFT_REF mref,
 	if (ntfs_mft_record_read(vol, mref, m))
 		goto err_out;
 
-	if (ntfs_mft_record_check(vol, mref, m))
-		goto err_out;
-	
+	/* should check first before calling ntfs_mft_record_check(),
+	 * whether sequence numbers are matched */
 	if (MSEQNO(mref) && MSEQNO(mref) != le16_to_cpu(m->sequence_number)) {
 		ntfs_log_error("Record %llu has wrong SeqNo (%d <> %d)\n",
 			       (unsigned long long)MREF(mref), MSEQNO(mref),
@@ -401,6 +435,10 @@ int ntfs_file_record_read(const ntfs_volume *vol, const MFT_REF mref,
 		errno = EIO;
 		goto err_out;
 	}
+
+	if (ntfs_mft_record_check(vol, mref, m))
+		goto err_out;
+
 	*mrec = m;
 	if (attr)
 		*attr = (ATTR_RECORD*)((char*)m + le16_to_cpu(m->attrs_offset));

@@ -173,6 +173,7 @@ static ntfs_inode *ntfs_inode_real_open(ntfs_volume *vol, const MFT_REF mref)
 		goto out;
 	if (ntfs_file_record_read(vol, mref, &ni->mrec, NULL))
 		goto err_out;
+
 	if (!(ni->mrec->flags & MFT_RECORD_IN_USE)) {
 		errno = ENOENT;
 		goto err_out;
