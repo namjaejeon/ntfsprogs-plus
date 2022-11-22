@@ -1391,18 +1391,10 @@ int main(int argc, char **argv)
 	unsigned long mnt_flags;
 
 	ntfs_log_set_handler(ntfs_log_handler_outerr);
-	if (argc == 1 || argc > 3) {
-		usage(1);
-		return RETURN_USAGE_OR_SYNTAX_ERROR;
-	}
-
-	if (argc == 2)
-		name = argv[1];
-	else
-		name = argv[2];
 
 	option.flags = NTFS_MNT_FS_ASK_REPAIR;
 	option.verbose = 0;
+	opterr = 0;
 	while ((c = getopt_long(argc, argv, "anpyhvV", opts, NULL)) != EOF) {
 		switch (c) {
 		case 'a':
@@ -1435,6 +1427,10 @@ int main(int argc, char **argv)
 			usage(1);
 		}
 	}
+
+	if (optind != argc - 1)
+		usage(1);
+	name = argv[optind];
 
 	if (!ntfs_check_if_mounted(name, &mnt_flags)) {
 		if ((mnt_flags & NTFS_MF_MOUNTED)) {
