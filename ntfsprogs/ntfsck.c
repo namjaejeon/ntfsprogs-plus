@@ -414,7 +414,7 @@ stack_of:
 
 		ctx = ntfs_attr_get_search_ctx(ni, NULL);
 		if (ctx && !(err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-					     CASE_SENSITIVE, 0, NULL, 0, ctx))) {
+						CASE_SENSITIVE, 0, NULL, 0, ctx))) {
 			/* We know this will always be resident. */
 			fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
 					le16_to_cpu(ctx->attr->value_offset));
@@ -668,7 +668,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, INDEX_ENTRY *ie,
 					0, NULL, 0, actx)) == 0) {
 		IGNORE_CASE_BOOL case_sensitive = IGNORE_CASE;
 
-		attr = actx->attr;
+		attr = actx->attr;	/* for $FILE_NAME */
 		fn = (FILE_NAME_ATTR*)((u8*)attr +
 				le16_to_cpu(attr->value_offset));
 		filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
@@ -690,8 +690,9 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, INDEX_ENTRY *ie,
 	}
 
 	/* NOT FOUND MFT/$FN */
+	check_failed("Filename in INDEX ENTRY can't find in MFT(%lld)'s $FN",
+			(unsigned long long)MREF(mref));
 remove_index:
-	check_failed("Filename(in $FILE_NAME) in INDEX ENTRY is different with MFT(%ld) ENTRY's one", MREF(mref));
 	if (ntfsck_ask_repair(vol)) {
 		ictx->entry = ie;
 		ret = ntfs_index_rm(ictx);
@@ -710,18 +711,22 @@ remove_index:
 			if (ret)
 				ntfs_log_error("Failed to add index entry, mft-no : %ld\n",
 						MREF(mref));
-			else
-				--fsck_errors;
 		}
+
+		if (!ret)
+			fsck_fixes++;
 	}
 
 	ntfs_attr_put_search_ctx(actx);
 	return ret;
 
 found:
-	/* FOUND!! MFT/$FN about IDX/$FN */
+	/* FOUND!! check INDEX/$FN about MFT/$FN */
 
 	ret = 0;
+
+	 /* MFT/$DATA's size fields already applied in inode */
+
 	/* check parent MFT reference */
 	if (ie_fn->parent_directory != fn->parent_directory) {
 		u64 idx_pdir;		/* IDX/$FN's parent MFT no */
@@ -735,49 +740,130 @@ found:
 		mft_pdir_seq = MSEQNO_LE(fn->parent_directory);
 
 		if (mft_pdir != ictx->ni->mft_no) {
-			/* parent MFT entry is not matched! */
-			/* Remove this IDX/$FN and,
-			 * TODO: Should add IDX/$FN for MFT/$FN in it's parent index */
-			ntfs_attr_name_free(&filename);
+			/* parent MFT entry is not matched! Remove this IDX/$FN */
+			check_failed("Parent MFT(%llu) entry is not matched "
+					"MFT/$FN's parent MFT(%llu:%s)",
+					(unsigned long long)ictx->ni->mft_no,
+					(unsigned long long)MREF(mref),
+					filename);
 			first_fn = fn;	/* add $FN to IDX after remove wrong index. */
+			ntfs_attr_name_free(&filename);
 			goto remove_index;
 		}
 
 		if (idx_pdir != mft_pdir || idx_pdir_seq != mft_pdir_seq) {
-			check_failed("Parent MFT's sequence No. is differnt "
-					"(IDX/$FN:%u MFT/$FN:%u) "
+			check_failed("Parent MFT reference is differnt "
+					"(IDX/$FN:%u-%llu MFT/$FN:%u-%llu) "
 					"on inode(%llu, %s)",
-					idx_pdir_seq, mft_pdir_seq,
+					idx_pdir_seq, (unsigned long long)idx_pdir,
+					mft_pdir_seq, (unsigned long long)mft_pdir,
 					(unsigned long long)ni->mft_no, filename);
-			need_fix = TRUE;
-			goto fix_index;
+			first_fn = fn;
+			ntfs_attr_name_free(&filename);
+			goto remove_index;
 		}
 	}
 
-	/* check $FN size fields */
-	if (ie_fn->allocated_size != fn->allocated_size) {
-		check_failed("Allocated size is different "
-			" (IDX/$FN:%llu MFT/$FN:%llu) "
-			"on inode(%llu, %s)",
-			(unsigned long long)sle64_to_cpu(ie_fn->allocated_size),
-			(unsigned long long)sle64_to_cpu(fn->allocated_size),
-			(unsigned long long)ni->mft_no, filename);
-		need_fix = TRUE;
-		goto fix_index;
+	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
+		if (!ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
+			check_failed("MFT flag set as directory, but there's no "
+					"MFT/$DATA attribute on inode(%llu:%s)",
+					(unsigned long long)ni->mft_no, filename);
+			first_fn = NULL;
+			goto remove_index;
+		}
+
+		if (!(fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT)) {
+			check_failed("MFT flag set as directory, but MFT/$FN flag "
+					"of inode(%llu:%s) is not set!",
+					(unsigned long long)ni->mft_no, filename);
+			if (ntfsck_ask_repair(vol)) {
+				fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
+				ntfs_inode_mark_dirty(ni);
+				NInoFileNameSetDirty(ni);
+			}
+		}
+
+		if ((fn->allocated_size != 0) || (fn->data_size != 0) ||
+				(ni->allocated_size != 0) || (ni->data_size != 0)) {
+			check_failed("Directory(%llu:%s) does not set zero size",
+					(unsigned long long)ni->mft_no, filename);
+			if (ntfsck_ask_repair(vol)) {
+				ni->allocated_size = 0;
+				ni->data_size = 0;
+				fn->allocated_size = cpu_to_sle64(0);
+				fn->data_size = cpu_to_sle64(0);
+				fsck_fixes++;
+			}
+		}
+		/* if inode is directory, then skip size fields check */
+		goto out;
 	}
 
-	/* check reparse point */
-	if (fn->file_attributes & FILE_ATTR_REPARSE_POINT) {
-		if (ie_fn->reparse_point_tag != fn->reparse_point_tag) {
-			check_failed("Reparse tag is different "
-				"(IDX/$FN:%08lx MFT/$FN:%08lx) "
-				"on inode(%llu, %s)",
-				(long)le32_to_cpu(ie_fn->reparse_point_tag),
-				(long)le32_to_cpu(fn->reparse_point_tag),
+	if (!(fn->file_attributes & FILE_ATTR_SPARSE_FILE)) {
+		/* check $FN size fields */
+		if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
+			check_failed("Allocated size is different "
+				"(IDX/$FN:%llu MFT/$DATA:%llu) on inode(%llu, %s)",
+				(unsigned long long)sle64_to_cpu(ie_fn->allocated_size),
+				(unsigned long long)ni->allocated_size,
 				(unsigned long long)ni->mft_no, filename);
 			need_fix = TRUE;
 			goto fix_index;
 		}
+		/*
+		 * Is it need to check MFT/$FN's data size?
+		 * It looks like that Windows does not check MFT/$FN's data size.
+		 */
+		if (ni->data_size != ie_fn->data_size) {
+			check_failed("Data size is different "
+				"(IDX/$FN:%llu MFT/$DATA:%llu) on inode(%llu, %s)",
+				(unsigned long long)sle64_to_cpu(ie_fn->data_size),
+				(unsigned long long)ni->data_size,
+				(unsigned long long)ni->mft_no, filename);
+			need_fix = TRUE;
+			goto fix_index;
+		}
+	} else {
+		/* TODO: check data run and size in later */
+	}
+
+	/* check reparse point */
+	if (ni->flags & FILE_ATTR_REPARSE_POINT) {
+		ntfs_attr_search_ctx *_ctx = NULL;
+		REPARSE_POINT *rpp = NULL;
+
+		_ctx = ntfs_attr_get_search_ctx(ni, NULL);
+
+		if (ntfs_attr_lookup(AT_REPARSE_POINT, AT_UNNAMED, 0,
+					CASE_SENSITIVE, 0, NULL, 0, _ctx)) {
+			check_failed("MFT flag set as reparse file, but there's no "
+					"MFT/$REPARSE_POINT attribute on inode(%llu:%s)",
+					(unsigned long long)ni->mft_no, filename);
+			first_fn = NULL;
+			ntfs_attr_put_search_ctx(_ctx);
+			goto remove_index;
+		}
+
+		rpp = (REPARSE_POINT *)((u8 *)_ctx->attr +
+				le16_to_cpu(_ctx->attr->value_offset));
+
+		/* Is it worth to modify fn field? */
+		if (!(fn->file_attributes & FILE_ATTR_REPARSE_POINT))
+			fn->file_attributes |= FILE_ATTR_REPARSE_POINT;
+
+		if (ie_fn->reparse_point_tag != rpp->reparse_tag) {
+			check_failed("Reparse tag is different "
+				"(IDX/$FN:%08lx MFT/$FN:%08lx) on inode(%llu, %s)",
+				(long)le32_to_cpu(ie_fn->reparse_point_tag),
+				(long)le32_to_cpu(fn->reparse_point_tag),
+				(unsigned long long)ni->mft_no, filename);
+			ie_fn->reparse_point_tag = rpp->reparse_tag;
+			need_fix = TRUE;
+			ntfs_attr_put_search_ctx(_ctx);
+			goto fix_index;
+		}
+		ntfs_attr_put_search_ctx(_ctx);
 	}
 
 	/* set NI_FileNameDirty in ni->state to sync
@@ -785,12 +871,16 @@ found:
 fix_index:
 	if (need_fix) {
 		if (ntfsck_ask_repair(vol)) {
+			ntfs_inode_mark_dirty(ni);
 			NInoFileNameSetDirty(ni);
-			NInoSetDirty(ni);
-			ntfs_inode_update_times(ictx->ni, NTFS_UPDATE_CTIME);
 
-			/* CHECK: copy all MFT/$FN field to IDX/$FN */
-			memcpy(ie_fn, fn, sizeof(FILE_NAME_ATTR) - sizeof(ntfschar));
+			ie_fn->parent_directory = fn->parent_directory;
+
+			if (!(fn->file_attributes & FILE_ATTR_SPARSE_FILE)) {
+				ie_fn->allocated_size = cpu_to_sle64(ni->allocated_size);
+				ie_fn->data_size = cpu_to_sle64(ni->data_size);
+			}
+
 			ret = ntfsck_update_index_entry(ictx);
 			if (!ret)
 				fsck_fixes++;
@@ -800,7 +890,7 @@ fix_index:
 #if DEBUG
 	ntfsck_debug_print_fn_attr(actx, ie_fn, fn);
 #endif
-
+out:
 	ntfs_attr_name_free(&filename);
 	ntfs_attr_put_search_ctx(actx);
 	return ret;
@@ -889,7 +979,7 @@ retry:
 		 * And then make it resident attribute.
 		 */
 		if (data_size != init_size || alloc_size != lcn_data_size ||
-		    data_size > alloc_size) {
+				data_size > alloc_size) {
 			newsize = 0;
 		} else if (na->type != AT_INDEX_ALLOCATION) {
 			align_data_size = (data_size + vol->cluster_size - 1) & ~(vol->cluster_size - 1);
@@ -915,7 +1005,7 @@ retry:
 				fsck_fixes++;
 			}
 		} else {
-			check_failed("Sizes of $INDEX ALLOCATION is corrupted, Removing and recreating attribute");
+			check_failed("inode(%llu): Sizes of $INDEX ALLOCATION is corrupted, Removing and recreating attribute", (unsigned long long)ni->mft_no);
 			if (ntfsck_ask_repair(vol)) {
 				ntfs_attr *rm_na, *ir_na;
 				u8 bmp[8];
@@ -1018,6 +1108,19 @@ close_na:
 	return 0;
 }
 
+static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
+		ntfs_index_context *ictx)
+{
+	/* check $FILE_NAME */
+	ntfsck_check_file_name_attr(ni, ie, ictx);
+
+	/* TODO: if it is normal file, then check $DATA */
+
+	/* TODO: if it is directory, then check $INDEX_ROOT/$INDEX_ALLOCATION/$BITMAP */
+
+	return 0;
+}
+
 static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 			       ntfs_index_context *ictx)
 {
@@ -1039,7 +1142,7 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (!ret && ni) {
 		int ext_idx = 0;
 
-		ntfsck_check_file_name_attr(ni, ie, ictx);
+		ntfsck_check_inode(ni, ie, ictx);
 
 		if (ntfsck_mft_bmp_bit_set(MREF(mref))) {
 			ret = -1;
@@ -1067,8 +1170,9 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 			dir->ni = ni;
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
-		} else
-			ntfs_inode_close(ni);
+		} else {
+			ntfs_inode_close_in_dir(ni, ictx->ni);
+		}
 	} else {
 		check_failed("mft entry(%ld) is corrupted, Removing index entry", MREF(mref));
 		if (ntfsck_ask_repair(vol)) {
@@ -1122,6 +1226,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		ctx = ntfs_attr_get_search_ctx(dir->ni, NULL);
 		if (!ctx)
+			/* continue ?? */
 			goto err_out;
 
 		/* Find the index root attribute in the mft record. */
@@ -1130,6 +1235,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			ntfs_log_perror("Index root attribute missing in directory inode "
 					"%lld", (unsigned long long)dir->ni->mft_no);
 			ntfs_attr_put_search_ctx(ctx);
+			/* continue ?? */
 			goto err_out;
 		}
 
