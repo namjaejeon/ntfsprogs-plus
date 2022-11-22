@@ -5,7 +5,8 @@ NEED_LOOPDEV=$2
 IMAGE_FILE=ntfs.img
 FSCK_PROG=ntfsck
 FSCK_PROG_2=ntfsck
-FSCK_OPTS="-a"
+FSCK_OPTS_AUTO="-a"
+FSCK_OPTS_CHECK="-n"
 PASS_COUNT=0
 
 cleanup() {
@@ -44,7 +45,7 @@ for TESTCASE_DIR in $TESTCASE_DIRS; do
 	fi
 
 	# Run fsck for repair
-	$FSCK_PROG $FSCK_OPTS "$DEV_FILE"
+	$FSCK_PROG $FSCK_OPTS_AUTO "$DEV_FILE"
 	if [ $? -ne 1 ] && [ $? -ne 0 ]; then
 		echo ""
 		echo "Failed to repair ${TESTCASE_DIR}"
@@ -56,7 +57,7 @@ for TESTCASE_DIR in $TESTCASE_DIRS; do
 
 	echo ""
 	# Run fsck again
-	$FSCK_PROG_2 "$DEV_FILE"
+	$FSCK_PROG_2 $FSCK_OPTS_CHECK "$DEV_FILE"
 	if [ $? -ne 0 ]; then
 		echo ""
 		echo "Failed, corrupted ${TESTCASE_DIR}"
