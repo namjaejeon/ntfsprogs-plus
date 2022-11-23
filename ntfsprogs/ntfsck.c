@@ -138,7 +138,7 @@ int parse_count = 1;
  * usage
  */
 __attribute__((noreturn))
-static void usage(int ret)
+static void usage(int error)
 {
 	ntfs_log_info("ntfsck v%s (libntfs-3g)\n\n"
 		      "Usage: ntfsck [options] device\n"
@@ -150,7 +150,7 @@ static void usage(int ret)
 		      "-v, --verbose		verbose\n"
 		      "-V, --version		version\n\n"
 		      "For example: ntfsck /dev/sda1\n\n", VERSION);
-	exit(ret);
+	exit(error ? RETURN_USAGE_OR_SYNTAX_ERROR : 0);
 }
 
 /**
