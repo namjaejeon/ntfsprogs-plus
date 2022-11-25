@@ -699,7 +699,6 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, INDEX_ENTRY *ie,
 				le16_to_cpu(attr->value_offset));
 		filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
 		ntfs_log_verbose("name: '%s'  type: %d\n", filename, fn->file_name_type);
-
 		if (fn->file_name_type == FILE_NAME_POSIX)
 			case_sensitive = CASE_SENSITIVE;
 		if (fn->file_name_type == ie_fn->file_name_type)
@@ -1168,7 +1167,10 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (!ret && ni) {
 		int ext_idx = 0;
 
-		ntfsck_check_inode(ni, ie, ictx);
+		/* skip checking for system files */
+		if (!(ni->flags & FILE_ATTR_SYSTEM)) {
+			ntfsck_check_inode(ni, ie, ictx);
+		}
 
 		if (ntfsck_mft_bmp_bit_set(MREF(mref))) {
 			ret = -1;
