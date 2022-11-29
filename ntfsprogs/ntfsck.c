@@ -237,9 +237,9 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 				fsck_bmp_bit = ntfs_bit_get(fsck_lcn_bitmap, cl);
 				if (fsck_bmp_bit != lbmp_bit) {
 					if (fsck_bmp_bit == 0 && lbmp_bit == 1) {
-						check_failed("Found orphaned cluster bit : %ld. Clear orphaned cluster bit in cluster bitmap", cl);
+						check_failed("Found orphaned cluster bit(%ld) in $Bitmap. Clear it", cl);
 					} else {
-						check_failed("Found missing cluster bit set : %ld in cluster bitmap. Set orphaned cluster bit into cluster bitmap", cl);
+						check_failed("Found missing cluster bit(%ld) in $Bitmap. Set it", cl);
 					}
 					if (ntfsck_ask_repair(vol)) {
 						ntfs_bit_set(bm, i * 8 + cl % 8, !lbmp_bit);
