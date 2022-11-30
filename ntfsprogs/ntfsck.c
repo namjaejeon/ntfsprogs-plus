@@ -363,8 +363,8 @@ stack_of:
 		}
 
 		ctx = ntfs_attr_get_search_ctx(ni, NULL);
-		if (ctx && !ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-					     CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+		if (ctx && !(err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+					     CASE_SENSITIVE, 0, NULL, 0, ctx))) {
 			/* We know this will always be resident. */
 			fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
 					le16_to_cpu(ctx->attr->value_offset));
