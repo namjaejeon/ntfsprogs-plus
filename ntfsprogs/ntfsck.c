@@ -287,7 +287,8 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 		rl = ntfs_mapping_pairs_decompress(ni->vol, actx->attr,
 				NULL);
 		if (!rl) {
-			ntfs_log_error("Failed to decompress runlist.  Leaving inconsistent metadata.\n");
+			ntfs_log_error("Failed to decompress runlist(mft_no : %ld, type : 0x%x).  Leaving inconsistent metadata.\n",
+					ni->mft_no, actx->attr->type);
 			continue;
 		}
 
