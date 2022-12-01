@@ -184,6 +184,8 @@ static s64 fsck_mft_bmp_size;
 u8 *fsck_lcn_bitmap;
 unsigned int fsck_lcn_bitmap_size;
 
+static int ntfsck_check_non_resident_data_size(ntfs_inode *ni);
+
 char ntfsck_mft_bmp_bit_get(const u64 bit)
 {
 	if (bit >> 3 > fsck_mft_bmp_size)
@@ -437,6 +439,30 @@ stack_of:
 				parent_ni = ntfs_inode_open(vol, MREF(parent_no));
 
 			if (parent_ni) {
+				int ret = 0;
+
+				/* validatation check for inode */
+				ret = ntfsck_check_non_resident_data_size(ni);
+				if (ret) {
+					ntfs_attr_put_search_ctx(ctx);
+					ntfs_inode_close(parent_ni);
+					ntfs_inode_close(ni);
+
+					ntfs_list_del(&of->list);
+					free(of);
+					continue;
+				}
+
+				/* check inode size */
+				if ((ni->allocated_size != fn->allocated_size) ||
+					(ni->data_size != fn->data_size)) {
+					fn->allocated_size = ni->allocated_size;
+					fn->data_size = ni->data_size;
+
+					NInoSetDirty(ni);
+					NInoFileNameSetDirty(ni);
+				}
+
 				err = ntfs_index_add_filename(parent_ni,
 							      fn, MK_MREF(ni->mft_no,
 							      le16_to_cpu(ni->mrec->sequence_number)));
