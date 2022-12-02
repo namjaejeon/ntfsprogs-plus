@@ -1530,19 +1530,14 @@ static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 	return 0;
 }
 
-static ntfs_volume *ntfsck_check_system_files_and_mount(struct ntfs_device *dev,
-		ntfs_mount_flags flags)
+static ntfs_volume *ntfsck_mount(const char *path __attribute__((unused)),
+		ntfs_mount_flags flags __attribute__((unused)))
 {
-	ntfs_inode *ni;
 	ntfs_volume *vol;
-	s64 mft_num;
 
-	ntfs_log_info("Parse #%d: Check check system files...\n", parse_count++);
-
-	/* Call ntfs_device_mount() to do the actual mount. */
-	vol = ntfs_device_mount(dev, option.flags);
+	vol = ntfs_mount(path, flags);
 	if (!vol)
-		return vol;
+		return NULL;
 
 	fsck_lcn_bitmap_size = NTFS_BLOCK_SIZE;
 	fsck_lcn_bitmap = ntfs_calloc(NTFS_BLOCK_SIZE);
@@ -1559,6 +1554,27 @@ static ntfs_volume *ntfsck_check_system_files_and_mount(struct ntfs_device *dev,
 		return NULL;
 	}
 
+	return vol;
+}
+
+static void ntfsck_umount(ntfs_volume *vol)
+{
+	if (fsck_lcn_bitmap)
+		free(fsck_lcn_bitmap);
+
+	if (fsck_mft_bmp)
+		free(fsck_mft_bmp);
+
+	ntfs_umount(vol, FALSE);
+}
+
+static int ntfsck_check_system_files(ntfs_volume *vol)
+{
+	ntfs_inode *ni;
+	s64 mft_num;
+
+	ntfs_log_info("Parse #%d: Check system files...\n", parse_count++);
+
 	/*
 	 * System MFT entries should be verified checked by ntfs_device_mount().
 	 * Here just account number of clusters that is used by system MFT
@@ -1569,9 +1585,17 @@ static ntfs_volume *ntfsck_check_system_files_and_mount(struct ntfs_device *dev,
 		ni = ntfs_inode_open(vol, mft_num);
 		if (ni)
 			ntfsck_update_lcn_bitmap(ni);
+
+		/* TODO: repair system MFT entries? */
 	}
 
-	return vol;
+	/*
+	 * TODO: should check sub system MFT entries.
+	 * system MFT entry like $Extends have sub system MFT entries,
+	 * but did not check here
+	 */
+
+	return 0;
 }
 
 /**
@@ -1581,9 +1605,8 @@ static ntfs_volume *ntfsck_check_system_files_and_mount(struct ntfs_device *dev,
  */
 int main(int argc, char **argv)
 {
-	struct ntfs_device *dev;
 	ntfs_volume *vol;
-	const char *name;
+	const char *path;
 	int c, errors = 0;
 	unsigned long mnt_flags;
 
@@ -1627,36 +1650,29 @@ int main(int argc, char **argv)
 
 	if (optind != argc - 1)
 		usage(1);
-	name = argv[optind];
+	path = argv[optind];
 
-	if (!ntfs_check_if_mounted(name, &mnt_flags)) {
+	if (!ntfs_check_if_mounted(path, &mnt_flags)) {
 		if ((mnt_flags & NTFS_MF_MOUNTED)) {
 			if (!(mnt_flags & NTFS_MF_READONLY)) {
 				ntfs_log_error("Refusing to operate on read-write mounted device %s.\n",
-						name);
+						path);
 				exit(1);
 			}
 
 			if (option.flags != (NTFS_MNT_FS_NO_REPAIR | NTFS_MNT_RDONLY)) {
 				ntfs_log_error("Refusing to change filesystem on read mounted device %s.\n",
-						name);
+						path);
 				exit(1);
 			}
 		}
 	} else
 		ntfs_log_perror("Failed to determine whether %s is mounted",
-				name);
+				path);
 
-	/* Allocate an ntfs_device structure. */
-	dev = ntfs_device_alloc(name, 0, &ntfs_device_default_io_ops, NULL);
-	if (!dev)
-		return RETURN_OPERATIONAL_ERROR;
+	vol = ntfsck_mount(path, option.flags);
 
-	vol = ntfsck_check_system_files_and_mount(dev, option.flags);
-	if (!vol) {
-		ntfs_device_free(dev);
-		return 2;
-	}
+	ntfsck_check_system_files(vol);
 
 	if (ntfsck_replay_log(vol))
 		goto err_out;
@@ -1684,7 +1700,7 @@ int main(int argc, char **argv)
 		ntfsck_reset_dirty(vol);
 
 err_out:
-	ntfs_umount(vol, FALSE);
+	ntfsck_umount(vol);
 
 	if (errors)
 		return 1;
