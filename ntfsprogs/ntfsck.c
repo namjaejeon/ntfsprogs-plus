@@ -711,17 +711,6 @@ found:
 		goto fix_index;
 	}
 
-	if (ie_fn->data_size != fn->data_size) {
-		check_failed("Data size is different "
-			"(IDX/$FN:%llu MFT/$FN:%llu) "
-			"on inode(%llu, %s)",
-			(unsigned long long)sle64_to_cpu(ie_fn->data_size),
-			(unsigned long long)sle64_to_cpu(fn->data_size),
-			(unsigned long long)ni->mft_no, filename);
-		need_fix = TRUE;
-		goto fix_index;
-	}
-
 	/* check reparse point */
 	if (fn->file_attributes & FILE_ATTR_REPARSE_POINT) {
 		if (ie_fn->reparse_point_tag != fn->reparse_point_tag) {
