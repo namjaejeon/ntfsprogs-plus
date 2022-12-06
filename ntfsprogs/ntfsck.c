@@ -444,6 +444,15 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	ntfs_log_verbose("MFT record %lld\n", (long long)mft_num);
 
 	ni = ntfs_inode_open(vol, mft_num);
+	is_used = ntfs_bit_get(fsck_mft_bmp, mft_num);
+	/*
+	 * If !ni and is_used is true, This mft number is external mft.
+	 * In the base mft entry, this will already be checked, so there
+	 * is no need to check it anymore.
+	 */
+	if (!ni && is_used)
+		return;
+
 	if (!ni) {
 		check_failed("Clear the bit of mft no(%ld) in the $MFT/$BITMAP corresponding orphaned MFT record",
 				mft_num);
@@ -458,7 +467,6 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		return;
 	}
 
-	is_used = ntfs_bit_get(fsck_mft_bmp, mft_num);
 	if (!is_used) {
 		check_failed("Found an orphaned file(mft no: %ld). Try to add index entry",
 				mft_num);
@@ -960,7 +968,25 @@ close_na:
 	return 0;
 }
 
+int ntfsck_update_mft_bmp(u64 mft_no)
+{
+	if (mft_no >> 3 > fsck_mft_bmp_size) {
+		s64 off = fsck_mft_bmp_size;
 
+		fsck_mft_bmp_size +=
+			((mft_no >> 3) + 1 + (NTFS_BLOCK_SIZE - 1)) &
+			~(NTFS_BLOCK_SIZE - 1);
+		fsck_mft_bmp = ntfs_realloc(fsck_mft_bmp,
+				fsck_mft_bmp_size);
+		if (!fsck_mft_bmp)
+			return -ENOMEM;
+		memset(fsck_mft_bmp + off, 0, fsck_mft_bmp_size - off);
+	}
+
+	ntfs_bit_set(fsck_mft_bmp, mft_no, 1);
+
+	return 0;
+}
 
 static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 			       ntfs_index_context *ictx)
@@ -981,20 +1007,22 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 	ni = ntfs_inode_open(vol, MREF(mref));
 	ret = ntfsck_check_non_resident_data_size(ni);
 	if (!ret && ni) {
-		if (MREF(mref) >> 3 > fsck_mft_bmp_size) {
-			s64 off = fsck_mft_bmp_size;
-
-			fsck_mft_bmp_size +=
-				((MREF(mref) >> 3) + 1 + (NTFS_BLOCK_SIZE - 1)) &
-				 ~(NTFS_BLOCK_SIZE - 1);
-			fsck_mft_bmp = ntfs_realloc(fsck_mft_bmp,
-					fsck_mft_bmp_size);
-			memset(fsck_mft_bmp + off, 0, fsck_mft_bmp_size - off);
-		}
+		int ext_idx = 0;
 
 		ntfsck_check_file_name_attr(ni, ie, ictx);
 
-		ntfs_bit_set(fsck_mft_bmp, MREF(mref), 1);
+		if (ntfsck_update_mft_bmp(MREF(mref))) {
+			ret = -1;
+			goto err_out;
+		}
+
+		while (ext_idx < ni->nr_extents) {
+			if (ntfsck_update_mft_bmp(ni->extent_nis[ext_idx]->mft_no)) {
+				ret = -1;
+				goto err_out;
+			}
+			ext_idx++;
+		}
 
 		if ((ie->key.file_name.file_attributes &
 		     FILE_ATTR_I30_INDEX_PRESENT) && strcmp(filename, ".") &&
