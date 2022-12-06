@@ -441,6 +441,16 @@ stack_of:
 			if (parent_ni) {
 				int ret = 0;
 
+				/* check inode size */
+				if ((ni->allocated_size != fn->allocated_size) ||
+					(ni->data_size != fn->data_size)) {
+					fn->allocated_size = ni->allocated_size;
+					fn->data_size = ni->data_size;
+
+					NInoSetDirty(ni);
+					NInoFileNameSetDirty(ni);
+				}
+
 				/* validatation check for inode */
 				ret = ntfsck_check_non_resident_data_size(ni);
 				if (ret) {
@@ -453,19 +463,9 @@ stack_of:
 					continue;
 				}
 
-				/* check inode size */
-				if ((ni->allocated_size != fn->allocated_size) ||
-					(ni->data_size != fn->data_size)) {
-					fn->allocated_size = ni->allocated_size;
-					fn->data_size = ni->data_size;
-
-					NInoSetDirty(ni);
-					NInoFileNameSetDirty(ni);
-				}
-
-				err = ntfs_index_add_filename(parent_ni,
-							      fn, MK_MREF(ni->mft_no,
-							      le16_to_cpu(ni->mrec->sequence_number)));
+				err = ntfs_index_add_filename(parent_ni, fn,
+					MK_MREF(ni->mft_no,
+						le16_to_cpu(ni->mrec->sequence_number)));
 				if (err) {
 					ntfs_log_error("ntfs_index_add_filename failed, err : %d\n", err);
 					ntfs_inode_close(parent_ni);
@@ -1003,21 +1003,36 @@ retry:
 		 * Reset non-resident if sizes are invalid,
 		 * And then make it resident attribute.
 		 */
-		if (data_size != init_size || alloc_size != lcn_data_size ||
-				data_size > alloc_size) {
-			newsize = 0;
-		} else if (na->type != AT_INDEX_ALLOCATION) {
-			align_data_size = (data_size + vol->cluster_size - 1) & ~(vol->cluster_size - 1);
-			if (align_data_size == alloc_size)
-				goto close_na;
-			newsize = data_size;
-			alloc_size = align_data_size;
-		} else
-			goto close_na;
+		if (actx->attr->type != AT_DATA) {
+			if (data_size != init_size || alloc_size != lcn_data_size ||
+					data_size > alloc_size) {
+				newsize = 0;
+			} else {
+				align_data_size = (data_size + vol->cluster_size - 1) &
+					~(vol->cluster_size - 1);
+				if (align_data_size == alloc_size)
+					goto close_na;
+				newsize = data_size;
+				alloc_size = align_data_size;
+			}
+		} else {
+			if (alloc_size != lcn_data_size) {
+				actx->attr->allocated_size = cpu_to_le64(lcn_data_size);
+				ntfs_inode_mark_dirty(ni);
+			}
+		}
 
 		ntfs_log_verbose("truncate new_size : %ld\n", newsize);
 
 		if (actx->attr->type == AT_DATA) {
+#ifdef UNUSED
+			/*
+			 * TODO:
+			 * In case of file (for $DATA attribute),
+			 * size fields should be checked with cluster run.
+			 * And also distinguish file and directory,
+			 * and consider file type like sparse/compressed/encrypted.
+			 */
 			if (!newsize) {
 				na->data_size = 0;
 				na->initialized_size = 0;
@@ -1029,6 +1044,7 @@ retry:
 					goto close_na;
 				fsck_fixes++;
 			}
+#endif
 		} else {
 			check_failed("inode(%llu): Sizes of $INDEX ALLOCATION is corrupted, Removing and recreating attribute", (unsigned long long)ni->mft_no);
 			if (ntfsck_ask_repair(vol)) {
