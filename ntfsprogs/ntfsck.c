@@ -184,6 +184,33 @@ static s64 fsck_mft_bmp_size;
 u8 *fsck_lcn_bitmap;
 unsigned int fsck_lcn_bitmap_size;
 
+char ntfsck_mft_bmp_bit_get(const u64 bit)
+{
+	if (bit >> 3 > fsck_mft_bmp_size)
+		return 0;
+	return ntfs_bit_get(fsck_mft_bmp, bit);
+}
+
+int ntfsck_mft_bmp_bit_set(u64 mft_no)
+{
+	if (mft_no >> 3 > fsck_mft_bmp_size) {
+		s64 off = fsck_mft_bmp_size;
+
+		fsck_mft_bmp_size =
+			(((mft_no >> 3) + 1 + (NTFS_BLOCK_SIZE - 1)) &
+			~(NTFS_BLOCK_SIZE - 1));
+
+		fsck_mft_bmp = ntfs_realloc(fsck_mft_bmp,
+				fsck_mft_bmp_size);
+		if (!fsck_mft_bmp)
+			return -ENOMEM;
+		memset(fsck_mft_bmp + off, 0, fsck_mft_bmp_size - off);
+	}
+
+	ntfs_bit_set(fsck_mft_bmp, mft_no, 1);
+	return 0;
+}
+
 static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 {
 	s64 pos = 0, wpos, i, count, written;
@@ -375,7 +402,7 @@ stack_of:
 			/*
 			 * Consider that the parent could be orphaned.
 			 */
-			if (!ntfs_bit_get(fsck_mft_bmp, MREF(parent_no))) {
+			if (!ntfsck_mft_bmp_bit_get(MREF(parent_no))) {
 				if (utils_mftrec_in_use(vol, MREF(parent_no))) {
 					ntfs_attr_put_search_ctx(ctx);
 					ntfs_inode_close(ni);
@@ -444,7 +471,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	ntfs_log_verbose("MFT record %lld\n", (long long)mft_num);
 
 	ni = ntfs_inode_open(vol, mft_num);
-	is_used = ntfs_bit_get(fsck_mft_bmp, mft_num);
+	is_used = ntfsck_mft_bmp_bit_get(mft_num);
 	/*
 	 * If !ni and is_used is true, This mft number is external mft.
 	 * In the base mft entry, this will already be checked, so there
@@ -968,26 +995,6 @@ close_na:
 	return 0;
 }
 
-int ntfsck_update_mft_bmp(u64 mft_no)
-{
-	if (mft_no >> 3 > fsck_mft_bmp_size) {
-		s64 off = fsck_mft_bmp_size;
-
-		fsck_mft_bmp_size +=
-			((mft_no >> 3) + 1 + (NTFS_BLOCK_SIZE - 1)) &
-			~(NTFS_BLOCK_SIZE - 1);
-		fsck_mft_bmp = ntfs_realloc(fsck_mft_bmp,
-				fsck_mft_bmp_size);
-		if (!fsck_mft_bmp)
-			return -ENOMEM;
-		memset(fsck_mft_bmp + off, 0, fsck_mft_bmp_size - off);
-	}
-
-	ntfs_bit_set(fsck_mft_bmp, mft_no, 1);
-
-	return 0;
-}
-
 static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 			       ntfs_index_context *ictx)
 {
@@ -1011,13 +1018,13 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 		ntfsck_check_file_name_attr(ni, ie, ictx);
 
-		if (ntfsck_update_mft_bmp(MREF(mref))) {
+		if (ntfsck_mft_bmp_bit_set(MREF(mref))) {
 			ret = -1;
 			goto err_out;
 		}
 
 		while (ext_idx < ni->nr_extents) {
-			if (ntfsck_update_mft_bmp(ni->extent_nis[ext_idx]->mft_no)) {
+			if (ntfsck_mft_bmp_bit_set(ni->extent_nis[ext_idx]->mft_no)) {
 				ret = -1;
 				goto err_out;
 			}
