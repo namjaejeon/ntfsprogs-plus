@@ -889,10 +889,14 @@ retry:
 				na->initialized_size = 0;
 			}
 
-			if (ntfs_non_resident_attr_shrink(na, newsize))
-				goto close_na;
+			check_failed("Sizes of $DATA is corrupted, Truncate it");
+			if (ntfsck_ask_repair(vol)) {
+				if (ntfs_non_resident_attr_shrink(na, newsize))
+					goto close_na;
+				errors--;
+			}
 		} else {
-			check_failed("Sizes of index allocation is corrupted, Removing and recreating attribute");
+			check_failed("Sizes of $INDEX ALLOCATION is corrupted, Removing and recreating attribute");
 			if (ntfsck_ask_repair(vol)) {
 				ntfs_attr *rm_na, *ir_na;
 				u8 bmp[8];
