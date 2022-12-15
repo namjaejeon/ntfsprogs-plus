@@ -52,11 +52,12 @@ typedef struct _ntfs_volume ntfs_volume;
 #include "attrib.h"
 #include "index.h"
 
-extern int errors;
+extern int fsck_errors;
+extern int fsck_fixes;
 
 #define check_failed(FORMAT, ARGS...) \
 	do { \
-		errors++; \
+		fsck_errors++; \
 		ntfs_log_redirect(__FUNCTION__, __FILE__, __LINE__, \
 				NTFS_LOG_LEVEL_ERROR, NULL, FORMAT, ##ARGS); \
 	} while (0);
@@ -79,6 +80,7 @@ enum {
 	NTFS_MNT_FS_AUTO_REPAIR		= 0x80000000,
 	NTFS_MNT_FS_YES_REPAIR		= 0x100000000,
 	NTFS_MNT_FS_ASK_REPAIR		= 0x200000000,
+	NTFS_MNT_FSCK			= 0x400000000,
 };
 typedef unsigned long ntfs_mount_flags;
 
@@ -135,6 +137,7 @@ typedef enum {
 	NV_FsAutoRepair,	/* 1: Volume is for fsck */
 	NV_FsYesRepair,		/* 1: Volume is for fsck */
 	NV_FsAskRepair,		/* 1: Volume is for fsck */
+	NV_Fsck,		/* 1: Volume is for fsck */
 } ntfs_volume_state_bits;
 
 #define test_nvol_flag(nv, flag)	test_bit(NV_##flag, (nv)->state)
@@ -192,6 +195,10 @@ typedef enum {
 #define NVolFsAskRepair(nv)		test_nvol_flag(nv, FsAskRepair)
 #define NVolSetFsAskRepair(nv)		set_nvol_flag(nv, FsAskRepair)
 #define NVolClearFsAskRepair(nv)	clear_nvol_flag(nv, FsAskRepair)
+
+#define NVolFsck(nv)			test_nvol_flag(nv, Fsck)
+#define NVolSetFsck(nv)			set_nvol_flag(nv, Fsck)
+#define NVolClearFsck(nv)		clear_nvol_flag(nv, Fsck)
 
 /*
  * NTFS version 1.1 and 1.2 are used by Windows NT4.

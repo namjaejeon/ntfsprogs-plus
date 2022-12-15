@@ -123,7 +123,8 @@ static const char *access_denied_msg =
 "and the mounting user ID. More explanation is provided at\n"
 "https://github.com/tuxera/ntfs-3g/wiki/NTFS-3G-FAQ\n";
 
-int errors;
+int fsck_errors;
+int fsck_fixes;
 
 /**
  * ntfs_volume_alloc - Create an NTFS volume object and initialise it
@@ -656,11 +657,14 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	if (!vol)
 		goto error_exit;
 
-	if (flags == NTFS_MNT_FS_YES_REPAIR)
+	if (flags & NTFS_MNT_FSCK)
+		NVolSetFsck(vol);
+
+	if (flags & NTFS_MNT_FS_YES_REPAIR)
 		NVolSetFsYesRepair(vol);
-	else if (flags == NTFS_MNT_FS_ASK_REPAIR)
+	else if (flags & NTFS_MNT_FS_ASK_REPAIR)
 		NVolSetFsAskRepair(vol);
-	else if (flags == NTFS_MNT_FS_AUTO_REPAIR)
+	else if (flags & NTFS_MNT_FS_AUTO_REPAIR)
 		NVolSetFsAutoRepair(vol);
 	
 	/* Create the default upcase table. */
@@ -1183,7 +1187,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 							use_mirr ? "" : "Mirr");
 					goto io_error_exit;
 				}
-				errors--;
+				fsck_fixes++;
 			} else {
 				goto io_error_exit;
 			}

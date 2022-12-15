@@ -465,44 +465,41 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 	BOOL fixed = FALSE;
 
 	if (!ntfs_is_indx_record(ib->magic)) {
-		ntfs_log_error("Corrupt index block signature: vcn %lld inode "
-			       "%llu\n", (long long)vcn,
+		check_failed("Corrupt index block signature: vcn %lld inode "
+			       "%llu", (long long)vcn,
 			       (unsigned long long)inum);
-		++errors;
 		if (ntfsck_ask_repair(vol)) {
 			ib->magic = magic_INDX;
-			--errors;
+			fsck_fixes++;
 			fixed = TRUE;
 		} else
 			return -1;
 	}
 	
 	if (sle64_to_cpu(ib->index_block_vcn) != vcn) {
-		ntfs_log_error("Corrupt index block: VCN (%lld) is different "
-			       "from expected VCN (%lld) in inode %llu\n",
+		check_failed("Corrupt index block: VCN (%lld) is different "
+			       "from expected VCN (%lld) in inode %llu",
 			       (long long)sle64_to_cpu(ib->index_block_vcn),
 			       (long long)vcn,
 			       (unsigned long long)inum);
-		++errors;
 		if (ntfsck_ask_repair(vol)) {
 			ib->index_block_vcn = cpu_to_sle64(vcn);
-			--errors;
+			fsck_fixes++;
 			fixed = TRUE;
 		} else
 			return -1;
 	}
 	
 	if (ib_size != block_size) {
-		ntfs_log_error("Corrupt index block : VCN (%lld) of inode %llu "
+		check_failed("Corrupt index block : VCN (%lld) of inode %llu "
 			       "has a size (%u) differing from the index "
-			       "specified size (%u)\n", (long long)vcn, 
+			       "specified size (%u)", (long long)vcn,
 			       (unsigned long long)inum, ib_size,
 			       (unsigned int)block_size);
-		++errors;
 		if (ntfsck_ask_repair(vol)) {
 			ib->index.allocated_size = cpu_to_le32(block_size -
 				offsetof(INDEX_BLOCK, index));
-			--errors;
+			fsck_fixes++;
 			fixed = TRUE;
 		} else
 			return -1;
@@ -613,7 +610,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 					ictx->ir->index.ih_flags = SMALL_INDEX;
 
 				ret = 1;
-				--errors;
+				fsck_fixes++;
 			}
 		}
 	}
@@ -632,7 +629,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 			check_failed("INDEX_ENTRY_NODE is not set in index entry");
 			if (ntfsck_ask_repair(vol)) {
 				ie->ie_flags |= INDEX_ENTRY_NODE;
-				--errors;
+				fsck_fixes++;
 				ret = 1;
 			} else
 				return -1;
@@ -645,9 +642,8 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (ie->key_length &&
 	    ((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key)) >
 	     le16_to_cpu(ie->length))) {
-		ntfs_log_error("Overflow from index entry in inode %lld\n",
+		check_failed("Overflow from index entry in inode %lld",
 				(long long)inum);
-		errors++;
 		if (ntfsck_ask_repair(vol)) {
 			int index_off = offsetof(INDEX_ENTRY, key.file_name.file_name) +
 					ie->key.file_name.file_name_length * sizeof(ntfschar);
@@ -656,7 +652,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 			if (index_off <= le16_to_cpu(ie->length)) {
 				ie->key_length = index_off;
-				--errors;
+				fsck_fixes++;
 				ret = 1;
 			} else
 				ret = -1;
@@ -670,7 +666,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 						* sizeof(ntfschar))
 				> le16_to_cpu(ie->length)) {
 				ntfs_log_error("File name overflow from index"
-					" entry in inode %lld\n",
+					" entry in inode %lld",
 					(long long)inum);
 				ret = -1;
 			}
@@ -680,16 +676,16 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 				    + le16_to_cpu(ie->data_length))
 				    > le16_to_cpu(ie->length))) {
 				ntfs_log_error("Data overflow from index"
-					" entry in inode %lld\n",
+					" entry in inode %lld",
 					(long long)inum);
 				ret = -1;
 			}
 		}
 
 		if (ret == -1) {
-			errors++;
+			fsck_errors++;
 			if (ntfsck_ask_repair(vol)) {
-				--errors;
+				fsck_fixes++;
 				if (collation_rule == COLLATION_FILE_NAME) {
 					ie->key.file_name.file_name_length = ie->key_length / sizeof(ntfschar);
 				} else {
@@ -2232,7 +2228,7 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 			if (ret > 0) {
 				ret = ntfsck_update_index_entry(ictx);
 				if (ret) {
-					errors++;
+					fsck_errors++;
 					entry = NULL;
 				}
 			}
@@ -2351,7 +2347,7 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 		if (ret > 0) {
 			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
-				errors++;
+				fsck_errors++;
 				return NULL;
 			}
 		}
@@ -2379,7 +2375,7 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 		if (ret > 0) {
 			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
-				errors++;
+				fsck_errors++;
 				next = (INDEX_ENTRY*)NULL;
 			}
 		}
