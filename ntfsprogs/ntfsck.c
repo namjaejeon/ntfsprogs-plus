@@ -244,7 +244,7 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 					if (ntfsck_ask_repair(vol)) {
 						ntfs_bit_set(bm, i * 8 + cl % 8, !lbmp_bit);
 						repair = TRUE;
-						errors--;
+						fsck_fixes++;
 					}
 				}
 			}
@@ -424,15 +424,13 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	is_used = utils_mftrec_in_use(vol, mft_num);
 	if (is_used < 0) {
-		ntfs_log_error("Error getting bit value for record %lld.\n",
+		check_failed("Error getting bit value for record %lld.\n",
 			(long long)mft_num);
-		errors++;
 		return;
 	} else if (!is_used) {
 		if (mft_num <= always_exist_sys_meta_num) {
-			ntfs_log_verbose("Record %lld unused. Fixing or fail about system files.\n",
+			check_failed("Record %lld unused. Fixing or fail about system files.\n",
 					(long long)mft_num);
-			errors++;
 			return;
 		}
 
@@ -453,7 +451,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 						errno);
 				return;
 			}
-			errors--;
+			fsck_fixes++;
 		}
 		return;
 	}
@@ -464,7 +462,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 				mft_num);
 		if (ntfsck_ask_repair(vol)) {
 			if (!ntfsck_add_index_entry_orphaned_file(vol, ni->mft_no)) {
-				errors--;
+				fsck_fixes++;
 				goto update_lcn_bitmap;
 			}
 
@@ -477,7 +475,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			if (ntfs_mft_record_free(vol, ni))
 				ntfs_log_error("Failed to free MFT record.  "
 						"Leaving inconsistent metadata. Run chkdsk.\n");
-			errors--;
+			fsck_fixes++;
 			return;
 		}
 	}
@@ -656,7 +654,7 @@ remove_index:
 				ntfs_log_error("Failed to add index entry, mft-no : %ld\n",
 						MREF(mref));
 			else
-				--errors;
+				--fsck_errors;
 		}
 	}
 
@@ -738,7 +736,7 @@ fix_index:
 			memcpy(ie_fn, fn, sizeof(FILE_NAME_ATTR) - sizeof(ntfschar));
 			ret = ntfsck_update_index_entry(ictx);
 			if (!ret)
-				errors--;
+				fsck_fixes++;
 		}
 	}
 
@@ -858,7 +856,7 @@ retry:
 			if (ntfsck_ask_repair(vol)) {
 				if (ntfs_non_resident_attr_shrink(na, newsize))
 					goto close_na;
-				errors--;
+				fsck_fixes++;
 			}
 		} else {
 			check_failed("Sizes of $INDEX ALLOCATION is corrupted, Removing and recreating attribute");
@@ -952,7 +950,7 @@ retry:
 				}
 				ntfs_attr_put_search_ctx(actx);
 				ntfs_inode_mark_dirty(ni);
-				errors--;
+				fsck_fixes++;
 				goto retry;
 			}
 		}
@@ -1027,7 +1025,7 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 				ntfs_log_verbose("Index entry that have mft no : %ld, filename %s is deleted\n",
 						MREF(mref), filename);
 				ret = 1;
-				errors--;
+				fsck_fixes++;
 			}
 		}
 	}
@@ -1128,7 +1126,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		if (ret > 0) {
 			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
-				errors++;
+				fsck_errors++;
 				goto err_out;
 			}
 		}
@@ -1319,8 +1317,7 @@ static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 	 * For now, Just reset logfile.
 	 */
 	if (ntfs_logfile_reset(vol)) {
-		ntfs_log_error("ntfs logfile reset failed, errno : %d\n", errno);
-		errors++;
+		check_failed("ntfs logfile reset failed, errno : %d\n", errno);
 		return -1;
 	}
 
@@ -1381,12 +1378,12 @@ int main(int argc, char **argv)
 	struct ntfs_device *dev;
 	ntfs_volume *vol;
 	const char *name;
-	int c;
+	int c, errors = 0;
 	unsigned long mnt_flags;
 
 	ntfs_log_set_handler(ntfs_log_handler_outerr);
 
-	option.flags = NTFS_MNT_FS_ASK_REPAIR;
+	option.flags = NTFS_MNT_FSCK | NTFS_MNT_FS_ASK_REPAIR;
 	option.verbose = 0;
 	opterr = 0;
 	while ((c = getopt_long(argc, argv, "anpyhvV", opts, NULL)) != EOF) {
@@ -1470,8 +1467,10 @@ int main(int argc, char **argv)
 
 	ntfsck_check_orphaned_clusters(vol);
 
+	errors = fsck_errors - fsck_fixes;
 	if (errors)
-		ntfs_log_info("%d errors found.\n", errors);
+		ntfs_log_info("%d errors found, %d fixed\n",
+				errors, fsck_fixes);
 	else
 		ntfs_log_info("Clean, No errors found\n");
 

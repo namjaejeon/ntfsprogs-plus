@@ -245,33 +245,42 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 
 	/* check magic number of mft */
 	if (!ntfs_is_file_record(m->magic)) {
-		if (!NVolNoFixupWarn(vol))
+		if (NVolFsck(vol)) {
+			check_failed("Record %llu has no FILE magic (0x%x)",
+					(unsigned long long)MREF(mref),
+					(int)le32_to_cpu(*(le32 *)m));
+
+			if (ntfsck_ask_repair(vol)) {
+				m->magic = magic_FILE;
+				fsck_fixes++;
+				fixed = TRUE;
+			} else
+				goto err_out;
+		} else if (!NVolNoFixupWarn(vol))
 			ntfs_log_error("Record %llu has no FILE magic (0x%x)\n",
 				(unsigned long long)MREF(mref),
 				(int)le32_to_cpu(*(le32*)m));
-
-		++errors;
-		if (ntfsck_ask_repair(vol)) {
-			m->magic = magic_FILE;
-			--errors;
-			fixed = TRUE;
-		} else
-			goto err_out;
 	}
 
 	/* check allocated size */
 	if (le32_to_cpu(m->bytes_allocated) != vol->mft_record_size) {
-		ntfs_log_error("Record %llu has corrupt allocation size "
-			       "(%u <> %u)\n", (unsigned long long)MREF(mref),
-			       vol->mft_record_size,
-			       le32_to_cpu(m->bytes_allocated));
-		++errors;
-		if (ntfsck_ask_repair(vol)) {
-			m->bytes_allocated = cpu_to_le32(vol->mft_record_size);
-			--errors;
-			fixed = TRUE;
-		} else
-			goto err_out;
+		if (NVolFsck(vol)) {
+			check_failed("Record %llu has corrupt allocation size "
+				     "(%u <> %u)", (unsigned long long)MREF(mref),
+				     vol->mft_record_size,
+				     le32_to_cpu(m->bytes_allocated));
+			if (ntfsck_ask_repair(vol)) {
+				m->bytes_allocated = cpu_to_le32(vol->mft_record_size);
+				fsck_fixes++;
+				fixed = TRUE;
+			} else
+				goto err_out;
+		} else {
+			ntfs_log_error("Record %llu has corrupt allocation size "
+				       "(%u <> %u)\n", (unsigned long long)MREF(mref),
+				       vol->mft_record_size,
+				       le32_to_cpu(m->bytes_allocated));
+		}
 	}
 
 	/* check bytes_in_use is aligned */
@@ -280,6 +289,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		ntfs_log_error("Used size of MFT record is badly aligned "
 				"in record %llu\n",
 			       (unsigned long long)MREF(mref));
+		fsck_errors++;
 		goto err_out;
 	}
 
@@ -288,6 +298,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		ntfs_log_error("Record %llu has corrupt in-use size "
 			       "(%u > %u)\n", (unsigned long long)MREF(mref),
 			       (int)biu, (int)vol->mft_record_size);
+		fsck_errors++;
 		goto err_out;
 	}
 
@@ -299,6 +310,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	if (offset & 7) {
 		ntfs_log_error("Attributes badly aligned in record %llu\n",
 			       (unsigned long long)MREF(mref));
+		fsck_errors++;
 		goto err_out;
 	}
 
@@ -306,6 +318,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		ntfs_log_error("MFT record(%llu)'s attribute start offset "
 				"is corrupted\n",
 				(unsigned long long)MREF(mref));
+		fsck_errors++;
 		goto err_out;
 	}
 
@@ -314,6 +327,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	if (p2n(a) < p2n(m) || (char *)a > (char *)m + vol->mft_record_size) {
 		ntfs_log_error("Record %llu is corrupt\n",
 			       (unsigned long long)MREF(mref));
+		fsck_errors++;
 		goto err_out;
 	}
 
@@ -338,20 +352,23 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 			} else {
 				ntfs_log_error("Corrupted MFT record %llu\n",
 				       (unsigned long long)MREF(mref));
+				fsck_errors++;
 				goto err_out;
 			}
 		}
 		/* TODO: if attribute order is corrupted, fix it here? */
 
-		/*
-		 * We are supposed to reach an AT_END. Check bytes_in_use value
-		 */
-		if ((a->type == AT_END) && (biu != offset + space)) {
-			check_failed("Bad end of MFT record %llu ",
-					(unsigned long long)MREF(mref));
-			if (ntfsck_ask_repair(vol)) {
-				m->bytes_in_use = cpu_to_le32(offset + space);
-				fixed = TRUE;
+		if (NVolFsck(vol)) {
+			/*
+			 * We are supposed to reach an AT_END. Check bytes_in_use value
+			 */
+			if ((a->type == AT_END) && (biu != offset + space)) {
+				check_failed("Bad end of MFT record %llu",
+						(unsigned long long)MREF(mref));
+				if (ntfsck_ask_repair(vol)) {
+					m->bytes_in_use = cpu_to_le32(offset + space);
+					fixed = TRUE;
+				}
 			}
 		}
 	}

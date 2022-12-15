@@ -3533,7 +3533,7 @@ int ntfs_attr_inconsistent(const ntfs_volume *vol, const ATTR_RECORD *a,
 						"is not set to be indexed\n");
 
 				if (ntfsck_ask_repair(vol)) {
-					errors--;
+					fsck_fixes++;
 					mod_a->resident_flags = RESIDENT_ATTR_IS_INDEXED;
 					*fixed = TRUE;
 				}
@@ -3576,7 +3576,7 @@ int ntfs_attr_inconsistent(const ntfs_volume *vol, const ATTR_RECORD *a,
 						vol->indx_record_size,
 						(unsigned long long)inum);
 				if (ntfsck_ask_repair(vol)) {
-					errors--;
+					fsck_fixes++;
 					ir->index_block_size = le32_to_cpu(vol->indx_record_size);
 					*fixed = TRUE;
 				}
