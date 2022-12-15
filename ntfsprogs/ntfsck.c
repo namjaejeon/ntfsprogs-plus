@@ -812,7 +812,7 @@ retry:
 			na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
 			break;
 		default:
-			ntfs_log_error("No check sizes of non-resident that had 0x%x type of attribute.\n",
+			ntfs_log_verbose("No check sizes of non-resident that had 0x%x type of attribute.\n",
 					actx->attr->type);
 			continue;
 		}
