@@ -2166,7 +2166,7 @@ BOOL ntfsck_ask_repair(const ntfs_volume *vol)
 		repair = TRUE;
 	} else if (NVolFsAskRepair(vol)) {
 		do {
-			printf("(y/N)? ");
+			ntfs_log_error(" (y/N)? ");
 			fflush(stdout);
 
 			if (fgets(answer, sizeof(answer), stdin)) {
@@ -2179,6 +2179,6 @@ BOOL ntfsck_ask_repair(const ntfs_volume *vol)
 		} while (1);
 	}
 
-	printf("(y/N)? %c\n", repair ? 'y' : 'N');
+	ntfs_log_error(" (y/N)? %c\n", repair ? 'y' : 'N');
 	return repair;
 }
