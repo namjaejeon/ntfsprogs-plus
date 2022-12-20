@@ -823,11 +823,9 @@ retry:
 		}
 
 		while (rl[i].length) {
-			if (rl[i].lcn > (LCN)LCN_HOLE) {
-				ntfs_log_verbose("Cluster run of mft entry(%ld), vcn : %ld, lcn : %ld, length : %ld\n",
-						ni->mft_no, i, rl[i].lcn, rl[i].length);
-				lcn_data_size += ni->vol->cluster_size * rl[i].length;
-			}
+			ntfs_log_verbose("Cluster run of mft entry(%ld), vcn : %ld, lcn : %ld, length : %ld\n",
+					ni->mft_no, i, rl[i].lcn, rl[i].length);
+			lcn_data_size += ni->vol->cluster_size * rl[i].length;
 
 			++i;
 		}
