@@ -615,7 +615,8 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 			if (res) {
 				ntfs_log_error("Boot sector: failed to fix boot sector\n");
 				return res;
-			}
+			} else
+				fsck_fixes++;
 		} else if (res) {
 			return 1;
 		}
