@@ -825,7 +825,7 @@ static int ntfs_volume_check_logfile(ntfs_volume *vol)
 		goto out;
 	}
 	
-	if (!ntfs_check_logfile(na, &rp) || !ntfs_is_logfile_clean(na, rp))
+	if (!ntfs_check_logfile(na, &rp))
 		err = EOPNOTSUPP;
 		/*
 		 * If the latest restart page was identified as version
