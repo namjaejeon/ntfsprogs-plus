@@ -211,10 +211,37 @@ int ntfsck_mft_bmp_bit_set(u64 mft_no)
 	return 0;
 }
 
+static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
+{
+	NTFS_BOOT_SECTOR *backup_boot;
+	s64 backup_boot_pos = cl_pos << vol->cluster_size_bits;
+
+	backup_boot = ntfs_malloc(vol->sector_size);
+	if (!backup_boot)
+		return -ENOMEM;
+
+	if (ntfs_pread(vol->dev, backup_boot_pos, vol->sector_size, backup_boot) !=
+			vol->sector_size) {
+		ntfs_log_error("Failed to read boot sector.\n");
+		free(backup_boot);
+		return -EIO;
+	}
+
+	if (!ntfs_boot_sector_is_ntfs(backup_boot)) {
+		free(backup_boot);
+		return -ENOENT;
+	}
+
+	ntfs_log_verbose("Found backup boot sector in "
+			 "the middle of the volume(cl_pos : %ld).\n", cl_pos);
+	free(backup_boot);
+	return 0;
+}
+
 static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 {
 	s64 pos = 0, wpos, i, count, written;
-	BOOL backup_boot_sec_bit = FALSE, repair = FALSE;
+	BOOL backup_boot_check = FALSE, repair = FALSE;
 	u8 bm[NTFS_BUF_SIZE];
 
 	ntfs_log_info("Parse #%d: Check cluster bitmap...\n", parse_count++);
@@ -247,22 +274,20 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 			for (cl = pos * 8; cl < (pos + 1) * 8; cl++) {
 				char lbmp_bit, fsck_bmp_bit;
 
-				/*
-				 * Don't count cluster allocation bit for backup
-				 * boot sector. Too much allocation bitmap for
-				 * this bit is not need to be allocated.
-				 */
-				if (cl == vol->nr_clusters) {
-					backup_boot_sec_bit = TRUE;
-					continue;
-				}
-
-				if (cl > vol->nr_clusters)
+				if (cl >= vol->nr_clusters)
 					break;
 
 				lbmp_bit = ntfs_bit_get(bm, i * 8 + cl % 8);
 				fsck_bmp_bit = ntfs_bit_get(fsck_lcn_bitmap, cl);
 				if (fsck_bmp_bit != lbmp_bit) {
+					if (!fsck_bmp_bit && backup_boot_check == FALSE &&
+					    cl == vol->nr_clusters / 2) {
+						if (!ntfsck_check_backup_boot_sector(vol, cl)) {
+							backup_boot_check = TRUE;
+							continue;
+						}
+					}
+
 					if (fsck_bmp_bit == 0 && lbmp_bit == 1) {
 						check_failed("Found orphaned cluster bit(%ld) in $Bitmap. Clear it", cl);
 					} else {
@@ -285,9 +310,6 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 			repair = FALSE;
 		}
 	}
-
-	if (backup_boot_sec_bit == FALSE)
-		ntfs_log_error("Last cluster bit for backup boot sector is not set in $Bitmap\n");
 }
 
 static void ntfsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
