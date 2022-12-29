@@ -891,13 +891,14 @@ retry:
 		if (data_size != init_size || alloc_size != lcn_data_size ||
 		    data_size > alloc_size) {
 			newsize = 0;
-		} else {
+		} else if (na->type != AT_INDEX_ALLOCATION) {
 			align_data_size = (data_size + vol->cluster_size - 1) & ~(vol->cluster_size - 1);
 			if (align_data_size == alloc_size)
 				goto close_na;
 			newsize = data_size;
 			alloc_size = align_data_size;
-		}
+		} else
+			goto close_na;
 
 		ntfs_log_verbose("truncate new_size : %ld\n", newsize);
 
