@@ -465,15 +465,9 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 	BOOL fixed = FALSE;
 
 	if (!ntfs_is_indx_record(ib->magic)) {
-		check_failed("Corrupt index block signature: vcn %lld inode "
-			       "%llu", (long long)vcn,
-			       (unsigned long long)inum);
-		if (ntfsck_ask_repair(vol)) {
-			ib->magic = magic_INDX;
-			fsck_fixes++;
-			fixed = TRUE;
-		} else
-			return -1;
+		ntfs_log_error("Corrupt index block signature: vcn(%llu) inode(%llu)\n",
+			       (long long)vcn, (unsigned long long)inum);
+		return -1;
 	}
 	
 	if (sle64_to_cpu(ib->index_block_vcn) != vcn) {
