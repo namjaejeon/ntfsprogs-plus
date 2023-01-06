@@ -608,41 +608,41 @@ void ntfsck_debug_print_fn_attr(ntfs_attr_search_ctx *actx,
 
 	if (si_mtime != mft_fn->last_data_change_time ||
 			si_mtime_mft != mft_fn->last_mft_change_time) {
-		ntfs_log_debug("STD TIME != MFT/$FN\n");
+		ntfs_log_info("STD TIME != MFT/$FN\n");
 		diff = TRUE;
 	}
 
 	if (si_mtime != ni->last_data_change_time ||
 			si_mtime_mft != ni->last_mft_change_time) {
-		ntfs_log_debug("STD TIME != INODE\n");
+		ntfs_log_info("STD TIME != INODE\n");
 		diff = TRUE;
 	}
 
 	if (si_mtime != idx_fn->last_data_change_time ||
 			si_mtime_mft != idx_fn->last_mft_change_time) {
-		ntfs_log_debug("STD TIME != IDX/$FN\n");
+		ntfs_log_info("STD TIME != IDX/$FN\n");
 		diff = TRUE;
 	}
 
 	if (idx_fn->parent_directory != mft_fn->parent_directory) {
-		ntfs_log_debug("different parent_directory IDX/$FN, MFT/$FN\n");
+		ntfs_log_info("different parent_directory IDX/$FN, MFT/$FN\n");
 		diff = TRUE;
 	}
 	if (idx_fn->allocated_size != mft_fn->allocated_size) {
-		ntfs_log_debug("different allocated_size IDX/$FN, MFT/$FN\n");
+		ntfs_log_info("different allocated_size IDX/$FN, MFT/$FN\n");
 		diff = TRUE;
 	}
 	if (idx_fn->allocated_size != mft_fn->allocated_size) {
-		ntfs_log_debug("different allocated_size IDX/$FN, MFT/$FN\n");
+		ntfs_log_info("different allocated_size IDX/$FN, MFT/$FN\n");
 		diff = TRUE;
 	}
 	if (idx_fn->data_size != mft_fn->data_size) {
-		ntfs_log_debug("different data_size IDX/$FN, MFT/$FN\n");
+		ntfs_log_info("different data_size IDX/$FN, MFT/$FN\n");
 		diff = TRUE;
 	}
 
 	if (idx_fn->reparse_point_tag != mft_fn->reparse_point_tag) {
-		ntfs_log_debug("different reparse_point IDX/$FN:%x, MFT/$FN:%x\n",
+		ntfs_log_info("different reparse_point IDX/$FN:%x, MFT/$FN:%x\n",
 				idx_fn->reparse_point_tag,
 				mft_fn->reparse_point_tag);
 		diff = TRUE;
@@ -651,19 +651,27 @@ void ntfsck_debug_print_fn_attr(ntfs_attr_search_ctx *actx,
 	if (diff == FALSE)
 		return;
 
-	ntfs_log_debug("======== START %llu ================\n", ni->mft_no);
-	ntfs_log_debug("inode ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
-			ni->creation_time, ni->last_data_change_time,
-			ni->last_mft_change_time, ni->last_access_time);
-	ntfs_log_debug("std_info ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
-			si_ctime, si_mtime, si_mtime_mft, si_atime);
-	ntfs_log_debug("mft_fn ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
-			mft_fn->creation_time, mft_fn->last_data_change_time,
-			mft_fn->last_mft_change_time, mft_fn->last_access_time);
-	ntfs_log_debug("idx_fn ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
-			idx_fn->creation_time, idx_fn->last_data_change_time,
-			idx_fn->last_mft_change_time, idx_fn->last_access_time);
-	ntfs_log_debug("======== END =======================\n");
+	ntfs_log_info("======== START %llu ================\n",
+			(unsigned long long)ni->mft_no);
+	ntfs_log_info("inode ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
+			(unsigned long long)ni->creation_time,
+			(unsigned long long)ni->last_data_change_time,
+			(unsigned long long)ni->last_mft_change_time,
+			(unsigned long long)ni->last_access_time);
+	ntfs_log_info("std_info ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
+			(unsigned long long)si_ctime, (unsigned long long)si_mtime,
+			(unsigned long long)si_mtime_mft, (unsigned long long)si_atime);
+	ntfs_log_info("mft_fn ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
+			(unsigned long long)mft_fn->creation_time,
+			(unsigned long long)mft_fn->last_data_change_time,
+			(unsigned long long)mft_fn->last_mft_change_time,
+			(unsigned long long)mft_fn->last_access_time);
+	ntfs_log_info("idx_fn ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
+			(unsigned long long)idx_fn->creation_time,
+			(unsigned long long)idx_fn->last_data_change_time,
+			(unsigned long long)idx_fn->last_mft_change_time,
+			(unsigned long long)idx_fn->last_access_time);
+	ntfs_log_info("======== END =======================\n");
 
 	return;
 }
