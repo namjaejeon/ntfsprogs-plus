@@ -725,6 +725,10 @@ int ntfs_cluster_free(ntfs_volume *vol, ntfs_attr *na, VCN start_vcn, s64 count)
 		// FIXME: Need to try ntfs_attr_map_runlist() for attribute
 		//	  list support! (AIA)
 		if (rl->lcn < 0 && rl->lcn != LCN_HOLE) {
+
+			if (NVolIsOnFsck(vol))
+				continue;
+
 			// FIXME: Eeek! We need rollback! (AIA)
 			errno = EIO;
 			ntfs_log_perror("%s: Invalid lcn (%lli)", 
