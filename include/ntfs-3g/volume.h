@@ -70,17 +70,19 @@ extern int fsck_fixes;
 enum {
 	NTFS_MNT_NONE                   = 0x00000000,
 	NTFS_MNT_RDONLY                 = 0x00000001,
+
+	NTFS_MNT_FS_NO_REPAIR		= 0x00000010,
+	NTFS_MNT_FS_AUTO_REPAIR		= 0x00000020,
+	NTFS_MNT_FS_YES_REPAIR		= 0x00000040,
+	NTFS_MNT_FS_ASK_REPAIR		= 0x00000080,
+	NTFS_MNT_FSCK			= 0x00000100,
+
 	NTFS_MNT_MAY_RDONLY             = 0x02000000, /* Allow fallback to ro */
 	NTFS_MNT_FORENSIC               = 0x04000000, /* No modification during
 	                                               * mount. */
 	NTFS_MNT_EXCLUSIVE              = 0x08000000,
 	NTFS_MNT_RECOVER                = 0x10000000,
 	NTFS_MNT_IGNORE_HIBERFILE       = 0x20000000,
-	NTFS_MNT_FS_NO_REPAIR		= 0x40000000,
-	NTFS_MNT_FS_AUTO_REPAIR		= 0x80000000,
-	NTFS_MNT_FS_YES_REPAIR		= 0x100000000,
-	NTFS_MNT_FS_ASK_REPAIR		= 0x200000000,
-	NTFS_MNT_FSCK			= 0x400000000,
 };
 typedef unsigned long ntfs_mount_flags;
 
