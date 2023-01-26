@@ -137,7 +137,7 @@ typedef enum {
 	NV_FsAutoRepair,	/* 1: Volume is for fsck */
 	NV_FsYesRepair,		/* 1: Volume is for fsck */
 	NV_FsAskRepair,		/* 1: Volume is for fsck */
-	NV_Fsck,		/* 1: Volume is for fsck */
+	NV_Fsck,		/* 1: Volume is on fsck */
 } ntfs_volume_state_bits;
 
 #define test_nvol_flag(nv, flag)	test_bit(NV_##flag, (nv)->state)
@@ -199,6 +199,8 @@ typedef enum {
 #define NVolFsck(nv)			test_nvol_flag(nv, Fsck)
 #define NVolSetFsck(nv)			set_nvol_flag(nv, Fsck)
 #define NVolClearFsck(nv)		clear_nvol_flag(nv, Fsck)
+
+#define NVolIsOnFsck(nv)		NVolFsck(nv)
 
 /*
  * NTFS version 1.1 and 1.2 are used by Windows NT4.
