@@ -754,10 +754,13 @@ runlist_element *ntfs_runlists_merge(runlist_element *drl,
 }
 
 /**
- * ntfs_mapping_pairs_decompress - convert mapping pairs array to runlist
+ * ntfs_mapping_pairs_decompress_i - convert mapping pairs array to runlist
  * @vol:	ntfs volume on which the attribute resides
  * @attr:	attribute record whose mapping pairs array to decompress
  * @old_rl:	optional runlist in which to insert @attr's runlist
+ * @part_rl:	not used in normal case. when this function return error
+ *		on fsck, part_rl will be output variable to preserve previous
+ *		'rl' data.
  *
  * Decompress the attribute @attr's mapping pairs array into a runlist. On
  * success, return the decompressed runlist.
@@ -779,9 +782,14 @@ runlist_element *ntfs_runlists_merge(runlist_element *drl,
  * new runlist disregarding the already existing one and then splicing the
  * two into one, if that is possible (we check for overlap and discard the new
  * runlist if overlap present before returning NULL, with errno = ERANGE).
+ *
+ * This function also can be called on fsck.
+ * On error on fsck, return NULL with errno and part_rl will preserve generated 'rl'
+ * data before error occurred.
  */
-static runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
-		const ATTR_RECORD *attr, runlist_element *old_rl)
+runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
+		const ATTR_RECORD *attr, runlist_element *old_rl,
+		runlist_element **part_rl)
 {
 	VCN vcn;		/* Current vcn. */
 	LCN lcn;		/* Current lcn. */
@@ -822,6 +830,7 @@ static runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
 		return NULL;
 	/* Insert unmapped starting element if necessary. */
 	if (vcn) {
+		ntfs_log_debug("Start vcn(%llu) is not zero\n", (unsigned long long)vcn);
 		rl->vcn = (VCN)0;
 		rl->lcn = (LCN)LCN_RL_NOT_MAPPED;
 		rl->length = vcn;
@@ -861,8 +870,7 @@ static runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
 			for (deltaxcn = (s8)buf[b--]; b; b--)
 				deltaxcn = (deltaxcn << 8) + buf[b];
 		} else { /* The length entry is compulsory. */
-			ntfs_log_debug("Missing length entry in mapping pairs "
-					"array.\n");
+			ntfs_log_error("Missing length entry in mapping pairs array.\n");
 			deltaxcn = (s64)-1;
 		}
 		/*
@@ -870,7 +878,7 @@ static runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
 		 * hence clean-up and return NULL.
 		 */
 		if (deltaxcn < 0) {
-			ntfs_log_debug("Invalid length in mapping pairs array.\n");
+			ntfs_log_error("Invalid length in mapping pairs array.\n");
 			goto err_out;
 		}
 		/*
@@ -890,6 +898,12 @@ static runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
 		else {
 			/* Get the lcn change which really can be negative. */
 			u8 b2 = *buf & 0xf;
+
+			if (!b2) {
+				ntfs_log_error("Invalid length in mapping pairs array.\n");
+				goto err_out;
+			}
+
 			b = b2 + ((*buf >> 4) & 0xf);
 			if (buf + b > attr_end)
 				goto io_error;
@@ -914,14 +928,12 @@ static runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
 #endif
 			/* Check lcn is not below -1. */
 			if (lcn < (LCN)-1) {
-				ntfs_log_debug("Invalid LCN < -1 in mapping pairs "
-						"array.\n");
+				ntfs_log_error("Invalid LCN < -1 in mapping pairs array.\n");
 				goto err_out;
 			}
 			/* chkdsk accepts zero-sized runs only for holes */
 			if ((lcn != (LCN)-1) && !rl[rlpos].length) {
-				ntfs_log_debug(
-					"Invalid zero-sized data run.\n");
+				ntfs_log_error("Invalid zero-sized data run.\n");
 				goto err_out;
 			}
 			/* Enter the current lcn into the runlist element. */
@@ -942,8 +954,7 @@ static runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
 	deltaxcn = sle64_to_cpu(attr->highest_vcn);
 	if (deltaxcn && vcn - 1 != deltaxcn) {
 mpa_err:
-		ntfs_log_debug("Corrupt mapping pairs array in non-resident "
-				"attribute.\n");
+		ntfs_log_error("Corrupt mapping pairs array in non-resident attribute.\n");
 		goto err_out;
 	}
 
@@ -987,8 +998,14 @@ mpa_err:
 			goto mpa_err;
 		}
 		rl[rlpos].lcn = (LCN)LCN_ENOENT;
-	} else /* Not the base extent. There may be more extents to follow. */
+	} else {	/* Not the base extent. There may be more extents to follow. */
 		rl[rlpos].lcn = (LCN)LCN_RL_NOT_MAPPED;
+		ntfs_log_debug("There may be more extents to follow(%llu,%llu,%llu), vcn:%llu\n",
+				(unsigned long long)rl[rlpos].vcn,
+				(unsigned long long)rl[rlpos].lcn,
+				(unsigned long long)rl[rlpos].length,
+				(unsigned long long)vcn);
+	}
 
 	/* Setup terminating runlist element. */
 	rl[rlpos].vcn = vcn;
@@ -1010,13 +1027,39 @@ mpa_err:
 		return old_rl;
 	err = errno;
 	free(rl);
-	ntfs_log_debug("Failed to merge runlists.\n");
+	ntfs_log_error("Failed to merge runlists.\n");
 	errno = err;
 	return NULL;
 io_error:
-	ntfs_log_debug("Corrupt attribute.\n");
+	ntfs_log_error("Cluster run list value is corrupted.\n");
 err_out:
-	free(rl);
+	ntfs_log_debug("Failed to make runlist normally(%llu, %llu, %llu) vcn:%llu\n",
+			(unsigned long long)rl[rlpos].lcn,
+			(unsigned long long)rl[rlpos].vcn,
+			(unsigned long long)rl[rlpos].length,
+			(unsigned long long)vcn);
+
+	if (NVolIsOnFsck(vol)) {
+		/* Setup terminating runlist element */
+		rl[rlpos].lcn = (LCN)LCN_ENOENT;
+		rl[rlpos].vcn = vcn;
+		rl[rlpos].length = (s64)0;
+
+		if (old_rl && old_rl[0].length && rl[0].length) {
+			/* 'rl' freed in ntfs_runlists_merge() */
+			old_rl = ntfs_runlists_merge(old_rl, rl);
+			if (old_rl)
+				rl = old_rl;
+		}
+		ntfs_debug_runlist_dump(rl);
+
+		if (part_rl)
+			*part_rl = rl;
+		else if (rl)
+			free(rl);
+	} else if (rl)
+		free(rl);
+
 	errno = EIO;
 	return NULL;
 }
@@ -1024,10 +1067,22 @@ err_out:
 runlist_element *ntfs_mapping_pairs_decompress(const ntfs_volume *vol,
 		const ATTR_RECORD *attr, runlist_element *old_rl)
 {
-	runlist_element *rle; 
-	
+	runlist_element *rle;
+
 	ntfs_log_enter("Entering\n");
-	rle = ntfs_mapping_pairs_decompress_i(vol, attr, old_rl);
+	rle = ntfs_mapping_pairs_decompress_i(vol, attr, old_rl, NULL);
+	ntfs_log_leave("\n");
+	return rle;
+}
+
+runlist_element *ntfs_mapping_pairs_decompress_on_fsck(const ntfs_volume *vol,
+		const ATTR_RECORD *attr, runlist_element *old_rl,
+		runlist_element **part_rl)
+{
+	runlist_element *rle;
+
+	ntfs_log_enter("Entering\n");
+	rle = ntfs_mapping_pairs_decompress_i(vol, attr, old_rl, part_rl);
 	ntfs_log_leave("\n");
 	return rle;
 }
@@ -1728,7 +1783,11 @@ int ntfs_rl_sparse(runlist *rl)
 		if (rlc->lcn < 0) {
 			if (rlc->lcn != LCN_HOLE) {
 				errno = EINVAL;
-				ntfs_log_perror("%s: bad runlist", __FUNCTION__);
+				ntfs_log_perror("%s: bad runlist(%llu, %llu, %llu)",
+						__func__,
+						(unsigned long long)rlc->vcn,
+						(unsigned long long)rlc->lcn,
+						(unsigned long long)rlc->length);
 				return -1;
 			}
 			return 1;
