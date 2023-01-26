@@ -442,6 +442,8 @@ stack_of:
 			if (parent_ni) {
 				int ret = 0;
 
+				/* TODO: check inode more detail before add index */
+
 				/* check inode size */
 				if ((ni->allocated_size != fn->allocated_size) ||
 					(ni->data_size != fn->data_size)) {
@@ -1287,33 +1289,870 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 	return (int32_t)ie_flags;
 }
 
+/* runlist allocated size: TODO move to runlist.c */
+struct rl_size {
+	s64 asize;	/* allocated size (include hole length) */
+	s64 real_asize;	/* real allocated size */
+	VCN vcn;	/* last valid vcn */
+};
+
+/*
+ * check runlist size and set/clear bitmap of runlist.
+ * Set bit until encountering lcn whose value is less than LCN_HOLE,
+ * after that, clear bit for lcn.
+ * (TODO: check duplicated, check $BITMAP if exist)
+ *
+ * @rl : runlist to check
+ * @rls : structure for runlist length, it can contain allocated size and
+ *	  real allocated size
+ */
+static int ntfsck_check_runlist(ntfs_attr *na, struct rl_size *rls)
+{
+	ntfs_inode *ni;
+	ntfs_volume *vol;
+	runlist *rl = NULL;
+	s64 rl_asize = 0;	/* rl allocated size (including HOLE length) */
+	s64 rl_real_asize = 0;	/* rl real allocated size */
+	s64 rsize;		/* a cluster run size */
+	VCN valid_vcn = 0;
+	int i = 0;
+	u8 set_bit = 1;	/* set or clear bit */
+
+	if (!na || !na->ni)
+		return STATUS_ERROR;
+
+	ni = na->ni;
+	vol = ni->vol;
+
+	rl = na->rl;
+	while (rl && rl[i].length) {
+		if (rl[i].lcn > LCN_HOLE) {
+			ntfs_log_trace("Cluster run of mtf entry(%ld): "
+					"vcn(%ld), lcn(%ld), length(%ld)\n",
+					ni->mft_no, rl[i].vcn, rl[i].lcn,
+					rl[i].length);
+
+#ifdef UNUSED /* TODO: check and repair later for duplicated cluster */
+	s64 idx;		/* index for continuous cluster */
+
+			/* check bitmap */
+			for (idx = 0; idx < rl[i].length; idx++) {
+				if (!ntfs_bit_get(fsck_lcn_bitmap, rl[i].lcn + idx))
+					continue;
+
+				/* found already set bitmap: duplicated cluster */
+				check_failed("Found duplicated cluster in inode(%llu)\n",
+						(unsigned long long)ni->mft_no);
+
+				/* truncate file */
+				rl[i].length = idx;
+
+				/* add item for terminating rl */
+				rl[i + 1].length = (s64)0;
+				rl[i + 1].lcn = (LCN)LCN_ENOENT;
+				break;
+			}
+#endif
+
+			ntfsck_set_bitmap_range(fsck_lcn_bitmap, rl[i].lcn,
+					rl[i].length, set_bit);
+
+			if (set_bit == 0)
+				ntfs_cluster_free_basic(vol, rl[i].lcn, rl[i].length);
+
+			rsize = rl[i].length << vol->cluster_size_bits;
+			rl_real_asize += rsize;
+			rl_asize += rsize;
+
+		} else if (rl[i].lcn == LCN_HOLE) {
+			rsize = rl[i].length << vol->cluster_size_bits;
+			rl_asize += rsize;
+
+		} else {
+			/* valid vcn until encountered < LCN_HOLE */
+			if (set_bit) {
+				valid_vcn = rl_asize >> vol->cluster_size_bits;
+				set_bit = 0;
+			}
+
+			rl[i].lcn = LCN_ENOENT;
+			rl[i].length = 0;
+		}
+
+		i++;
+	}
+
+	if (!valid_vcn)
+		valid_vcn = rl_asize >> vol->cluster_size_bits;
+
+	rls->vcn = valid_vcn;
+	rls->asize = rl_asize;
+	rls->real_asize = rl_real_asize;
+
+	return STATUS_OK;
+}
+
+/*
+ * Decompose non-resident cluster run and make into runlist.
+ *
+ * If cluster run should be repaired, need_fix will be set to TRUE.
+ * Even if cluster runs is corrupted, runlist array will preserve
+ * healthy state data even after encountering corruption.
+ *
+ * If error occur during decompose cluster run, next found attributes
+ * will be deleted.(In case there are multiple identical attribute exist)
+ * Before deleting attribute, rl will have deleleted attribute's cluster run
+ * information.(lcn field of rl which error occurred, may be LCN_ENOENT
+ * or LCN_RL_NOT_MAPPED)
+ *
+ * If attribute is resident, it will be deleted. So caller should check
+ * that only non-resident attribute will be passed to this function.
+ *
+ * rl may have normal cluster run information or deleted information
+ * Return runlist array(rl) if success.
+ * If caller need to apply modified runlist, then *need_fix is set to TRUE.
+ *
+ * Return NULL if it failed to make runlist noramlly.
+ * need_fix value is valid only when return success.
+ */
+
+/* TODO: move this to runlist.c ? */
+static runlist_element *ntfsck_decompose_mp(ntfs_attr *na, BOOL *need_fix)
+{
+	ntfs_volume *vol;
+	ntfs_inode *ni;
+	runlist *rl = NULL;
+	runlist *part_rl = NULL;
+	VCN next_vcn, last_vcn, highest_vcn;
+	ATTR_RECORD *attr = NULL;
+	ntfs_attr_search_ctx *actx;
+
+	if (!na || !na->ni) {
+		errno = EINVAL;
+		return NULL;
+	}
+	ni = na->ni;
+	vol = ni->vol;
+
+	actx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!actx) {
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	next_vcn = last_vcn = highest_vcn = 0;
+	/* There can be multiple $INDEX_ALLOCATION attributes in a inode */
+	while (1) {
+		runlist *temp_rl = NULL;
+
+		if (ntfs_attr_lookup(na->type, na->name, na->name_len, CASE_SENSITIVE,
+					next_vcn, NULL, 0, actx)) {
+			errno = ENOENT;
+			break;
+		}
+
+		attr = actx->attr;
+
+		/* remove resident attribute */
+		if (!attr->non_resident) {
+			check_failed("Inode(%llu)'s attribute(%d) has resident "
+					"type, remove it",
+					(unsigned long long)ni->mft_no, attr->type);
+			if (ntfsck_ask_repair(vol)) {
+				if (ntfs_attr_record_rm(actx)) {
+					ntfs_log_error("Couldn't remove attribute(%llu:%d).\n",
+							(unsigned long long)ni->mft_no,
+							attr->type);
+				}
+				fsck_fixes++;
+			}
+			continue;
+		}
+
+		temp_rl = rl;
+		rl = ntfs_mapping_pairs_decompress_on_fsck(vol, attr, temp_rl,
+				&part_rl);
+		if (!rl) {
+			/*
+			 * decompress mp failed,
+			 * but part of mp is preserved in part_rl.
+			 */
+
+			if (!part_rl) {
+				part_rl = ntfs_calloc(sizeof(runlist));
+				if (!part_rl)
+					goto out;
+				part_rl->vcn = 0;
+				part_rl->lcn = LCN_ENOENT;
+				part_rl->length = 0;
+			}
+
+			rl = part_rl;
+			*need_fix = TRUE;
+			/*
+			 * In case of decompress mp failure, fsck will
+			 * truncate it to zero size.
+			 * That is same as Windows repairing tool.
+			 */
+		} else {
+			/* remove found attribute after error occurred. */
+			if (*need_fix == TRUE) {
+				check_failed("Found corrupted mapping pairs array of inode(%llu). "
+						"Fix it", (unsigned long long)ni->mft_no);
+				if (ntfsck_ask_repair(vol)) {
+					if (ntfs_attr_record_rm(actx)) {
+						ntfs_log_error("Couldn't remove attribute(%llu:%d).\n",
+								(unsigned long long)ni->mft_no,
+								attr->type);
+					}
+					fsck_fixes++;
+					continue;
+				}
+			}
+		}
+
+		/* first $IA attribute */
+		if (!next_vcn) {
+			if (attr->lowest_vcn) {
+				check_failed("inode(%llu)'s first $DATA"
+						" lowest_vcn is not zero",
+						(unsigned long long)ni->mft_no);
+				errno = EIO;
+				/* should fix attribute's lowest_vcn */
+				if (ntfsck_ask_repair(vol)) {
+					attr->lowest_vcn = 0;
+					NInoSetDirty(ni);
+					fsck_fixes++;
+				}
+				break;
+			}
+		}
+
+		highest_vcn = sle64_to_cpu(attr->highest_vcn);
+		next_vcn = highest_vcn + 1;
+
+		if (next_vcn <= 0) {
+			errno = ENOENT;
+			break;
+		}
+
+		/* Avoid endless loops due to corruption */
+		if (next_vcn < sle64_to_cpu(attr->lowest_vcn)) {
+			ntfs_log_error("Inode %llu has corrupt attribute list\n",
+					(unsigned long long)ni->mft_no);
+			/* TODO: how attribute list repair ?? */
+			errno = EIO;
+			break;
+		}
+	}
+
+out:
+	ntfs_attr_put_search_ctx(actx);
+	return rl;
+}
+
+/*
+ * Remove $IA/$BITMAP, and initialize $IR attribute for repairing.
+ * This function should be called $IA or $BITMAP attribute is corrupted.
+ */
+static int ntfsck_initialize_index_attr(ntfs_inode *ni)
+{
+	ntfs_attr *bm_na = NULL;
+	ntfs_attr *ia_na = NULL;
+	ntfs_attr *ir_na = NULL;
+	u8 bmp[8];
+	int ret = STATUS_ERROR;
+
+	/*
+	 * Remove both ia attr and bitmap attr and recreate them.
+	 */
+	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
+	if (ia_na) {
+		if (ntfs_attr_rm(ia_na)) {
+			ntfs_log_error("Failed to remove $IA attr. of inode(%lld)\n",
+					(unsigned long long)ni->mft_no);
+			goto out;
+		}
+		ntfs_attr_close(ia_na);
+	}
+
+	bm_na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+	if (bm_na) {
+		if (ntfs_attr_rm(bm_na)) {
+			ntfs_log_error("Failed to remove $BITMAP attr. of "
+					" inode(%lld)\n",
+					(unsigned long long)ni->mft_no);
+			goto out;
+		}
+		ntfs_attr_close(bm_na);
+	}
+
+	ir_na = ntfs_attr_open(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4);
+	if (!ir_na) {
+		ntfs_log_error("Can't not open $IR attribute from mft(%ld) entry\n",
+				ni->mft_no);
+		goto out;
+	}
+
+	ret = ntfs_attr_truncate(ir_na,
+			sizeof(INDEX_ROOT) + sizeof(INDEX_ENTRY_HEADER));
+	if (ret == STATUS_OK) {
+		INDEX_ROOT *ir;
+		INDEX_ENTRY *ie;
+		int index_len =
+			sizeof(INDEX_HEADER) + sizeof(INDEX_ENTRY_HEADER);
+
+		ir = ntfs_ir_lookup2(ni, NTFS_INDEX_I30, 4);
+		if (!ir)
+			goto out;
+
+		ir->index.allocated_size = cpu_to_le32(index_len);
+		ir->index.index_length = cpu_to_le32(index_len);
+		ir->index.entries_offset = const_cpu_to_le32(sizeof(INDEX_HEADER));
+		ir->index.ih_flags = SMALL_INDEX;
+		ie = (INDEX_ENTRY *)((u8 *)ir + sizeof(INDEX_ROOT));
+		ie->length = cpu_to_le16(sizeof(INDEX_ENTRY_HEADER));
+		ie->key_length = 0;
+		ie->ie_flags = INDEX_ENTRY_END;
+	} else if (ret == STATUS_ERROR) {
+		ntfs_log_perror("Failed to truncate INDEX_ROOT");
+		goto out;
+	}
+
+	ntfs_attr_close(ir_na);
+
+	ret = STATUS_ERROR;	/* initialize return code */
+
+	/*
+	 * Recreate both $BITMAP attr and $IA attr.
+	 * All entries in this directory will be
+	 * orphaned and they will be revived when
+	 * checking orphaned entries under parse.
+	 */
+	memset(bmp, 0, sizeof(bmp));
+	if (ntfs_attr_add(ni, AT_BITMAP, NTFS_INDEX_I30, 4,
+				bmp, sizeof(bmp))) {
+		ntfs_log_perror("Failed to add AT_BITMAP");
+		goto out;
+	}
+
+	if (ntfs_attr_add(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4,
+				NULL, 0)) {
+		ntfs_log_perror("Failed to add AT_INDEX_ALLOCATION");
+		goto out;
+	}
+	ntfs_inode_mark_dirty(ni);
+
+	ret = STATUS_OK;
+out:
+	if (ir_na)
+		ntfs_attr_close(ir_na);
+	if (ia_na)
+		ntfs_attr_close(ia_na);
+	if (bm_na)
+		ntfs_attr_close(bm_na);
+	return ret;
+}
+
+/*
+ * Read from disk of non-resident attribute's cluster run,
+ * and make rl structure. Even if error occurred during decomposing
+ * runlist, * rl will include only valid cluster run of attribute.
+ *
+ * And rl also has another valid cluster run of next attribute.
+ * (multiple same name attribute may exist)
+ *
+ * If error occurred during decomposing runlist, lcn field of rl may
+ * have LCN_RL_NOT_MAPPED or not. So
+ */
+static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
+		BOOL *need_fix)
+{
+	runlist *rl = NULL;
+	int ret = STATUS_OK;
+
+	rl = ntfsck_decompose_mp(na, need_fix);
+	if (!rl) {
+		ntfs_log_error("Failed to get $IA "
+				"attribute in directory(%lld)",
+				(unsigned long long)na->ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+#ifdef _DEBUG
+	ntfs_log_info("Before =========================\n");
+	ntfs_dump_runlist(rl);
+#endif
+
+	na->rl = rl;
+
+	ret = ntfsck_check_runlist(na, rls);
+	if (ret)
+		return -1;
+
+#ifdef _DEBUG
+	ntfs_log_info("After =========================\n");
+	ntfs_dump_runlist(rl);
+#endif
+	return 0;
+}
+
+static int ntfsck_truncate_attr(ntfs_attr *na, s64 new_size)
+{
+	na->allocated_size = new_size;
+
+	/* apply rl to disk */
+	NAttrSetFullyMapped(na);
+	if (ntfs_attr_update_mapping_pairs(na, 0)) {
+		ntfs_log_error("Failed to update mapping pairs of "
+				"inode(%llu)\n",
+				(unsigned long long)na->ni->mft_no);
+		return -1;
+	}
+
+	if (ntfs_attr_truncate(na, na->allocated_size)) {
+		ntfs_log_error("Failed to truncate file\n");
+		return -1;
+	}
+	return 0;
+}
+
+static int ntfsck_check_directory(ntfs_inode *ni)
+{
+	ntfs_volume *vol;
+	ntfs_attr *ia_na = NULL;
+	ntfs_attr *bm_na = NULL;
+	BOOL need_fix = FALSE;
+	struct rl_size rls = {0, };
+	int ret = STATUS_OK;
+
+	if (!ni)
+		return -EINVAL;
+
+	vol = ni->vol;
+
+	/*
+	 * header size and overflow is already checked in opening inode
+	 * (ntfs_attr_inconsistent()). just check existence of $INDEX_ROOT.
+	 */
+	if (!ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
+		ntfs_log_perror("$IR is missing in inode(%lld)",
+				(unsigned long long)ni->mft_no);
+		ret = STATUS_ERROR;
+		/* remove mft entry */
+		goto out;
+	}
+
+	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
+	if (!ia_na) {
+		/* directory can have only $INDEX_ROOT. not error */
+
+		/* check $BITMAP if exist */
+		bm_na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+		if (!bm_na) {
+			/* both $IA and $BITMAP do not exist. it's OK. */
+			ret = STATUS_OK;
+			goto check_next;
+		}
+
+		/* only $BITMAP exist, remove it */
+		if (ntfs_attr_rm(bm_na)) {
+			ntfs_log_error("Failed to remove $BITMAP attr. of "
+					" inode(%lld)\n",
+					(unsigned long long)ni->mft_no);
+			ret = STATUS_ERROR;
+			goto out;
+		}
+		ntfs_attr_close(bm_na);
+		bm_na = NULL;
+		goto check_next;
+	}
+
+	/* $INDEX_ALLOCATION is always non-resident */
+	if (!NAttrNonResident(ia_na)) {
+		/* TODO: check $BITMAP, if exist, remove bitmap and ia */
+		ret = STATUS_ERROR;
+		goto init_all;
+	}
+
+#ifdef UNUSED /* check directory index bitmap in ntfsck_scan_index_entires_btree() loop */
+	/* calculate bitmap size from $IA data_size */
+	u8 *fsck_ibm = NULL;	/* for calculated index bitmap */
+
+	fsck_ibm_size = (ia_na->data_size + (vol->cluster_size - 1)) &
+		~(vol->cluster_size - 1);
+	fsck_ibm_size = ((fsck_ibm_size >> vol->cluster_size_bits) + 7) & ~7;
+	if (!fsck_ibm_size) {
+		u8 bmp[8];
+
+		memset(bmp, 0, sizeof(bmp));
+		if (ntfs_attr_add(ni, AT_BITMAP, NTFS_INDEX_I30, 4, bmp, sizeof(bmp))) {
+			ntfs_log_perror("Failed to add AT_BITMAP");
+			ret = STATUS_ERROR;
+			goto out;
+		}
+		goto check_next;
+	}
+
+	/* allocate for $IA bitmap */
+	fsck_ibm = ntfs_calloc(fsck_ibm_size);
+	if (!fsck_ibm) {
+		ntfs_log_perror("Failed to allocate memory\n");
+		goto init_all;
+	}
+#endif
+
+	/* check $IA cluster run */
+	if (ntfsck_check_attr_runlist(ia_na, &rls, &need_fix)) {
+		check_failed("Failed to get $BITMAP "
+				"attribute in directory(%lld)",
+				(unsigned long long)ni->mft_no);
+		goto init_all;
+	}
+
+	/* if need_fix is set to TRUE, apply modified runlist to cluster runs */
+	if (need_fix == TRUE) {
+		check_failed("$IA cluster run of inode(%lld) "
+				"corrupted. truncate it",
+				(unsigned long long)ni->mft_no);
+
+		if (ntfsck_ask_repair(vol)) {
+			s64 tr_size;
+
+			/*
+			 * keep a valid runlist as long as possible.
+			 * if truncate zero, call with second parameter to 0
+			 */
+			tr_size = rls.vcn << vol->cluster_size_bits;
+			if (ntfsck_truncate_attr(ia_na, tr_size))
+				goto init_all;
+
+			fsck_fixes++;
+		}
+	}
+
+	ntfs_attr_close(ia_na);
+	ia_na = NULL;
+
+	/*
+	 * check $BITMAP's cluster run
+	 * TODO: is it possible multiple $BITMAP attrib. in inode?
+	 */
+	bm_na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+	if (!bm_na) {
+		u8 bmp[8];
+
+		ntfs_log_perror("Failed to open $BITMAP of inode %llu",
+				(unsigned long long)ni->mft_no);
+
+		memset(bmp, 0, sizeof(bmp));
+		if (ntfs_attr_add(ni, AT_BITMAP, NTFS_INDEX_I30, 4, bmp,
+					sizeof(bmp))) {
+			ntfs_log_perror("Failed to add AT_BITMAP");
+			ret = STATUS_ERROR;
+			goto out;
+		}
+	}
+
+	if (NAttrNonResident(bm_na)) {
+		memset(&rls, 0, sizeof(struct rl_size));
+		need_fix = FALSE;
+
+		if (ntfsck_check_attr_runlist(bm_na, &rls, &need_fix)) {
+			check_failed("Failed to get $BITMAP cluster run in "
+					"inode(%lld)",
+					(unsigned long long)ni->mft_no);
+			goto init_all;
+		}
+
+		/* if need_fix is set to TRUE, apply modified runlist to cluster runs */
+		if (need_fix == TRUE) {
+			check_failed("$BITMAP cluster run of inode(%lld) "
+					"corrupted. truncate it",
+					(unsigned long long)ni->mft_no);
+
+			if (ntfsck_ask_repair(vol)) {
+				s64 tr_size = 0;
+
+				/*
+				 * keep a valid runlist as long as possible.
+				 * if truncate zero, call with second parameter to 0
+				 */
+				tr_size = rls.vcn << vol->cluster_size_bits;
+				if (ntfsck_truncate_attr(bm_na, tr_size))
+					goto init_all;
+
+				fsck_fixes++;
+			}
+		}
+	}
+
+#ifdef UNUSED /* should move to ntfsck_scan_index_entries_btree() */
+	u8 *ni_ibm = NULL;	/* for index bitmap reading from disk: $BITMAP */
+
+	/* read index bitmap from disk */
+	ni_ibm = ntfs_attr_readall(ni, AT_BITMAP, NTFS_INDEX_I30, 4, &ibm_size);
+	if (!ni_ibm) {
+		ntfs_log_error("Failed to read $BITMAP of inode(%llu)\n",
+				(unsigned long long)ni->mft_no);
+		goto init_all;
+	}
+
+	/* TODO: check index bitmap */
+	pos = 0;
+	remain_size = ibm_size;
+
+	while (remain_size > 0) {
+		remain_size = ibm_size - 8;
+		if (memcmp(fsck_ibm + pos, ni_ibm + pos, 8) == 0) {
+			pos += 8;
+			continue;
+		}
+		check_failed("Bitmap(pos:%d) from disk(%08x) and "
+				"calculated(%08x) of inode(%llu) are different",
+				pos, *(fsck_ibm + pos), *(ni_ibm + pos),
+				(unsigned long long)ni->mft_no);
+		if (ntfsck_ask_repair(vol)) {
+			ntfs_attr_pwrite(bm_na, pos, 8, fsck_ibm + pos);
+			fsck_fixes++;
+		}
+		pos += 8;
+	}
+#endif
+
+
+check_next:
+	/* TODO: need to check flag & size in na ? */
+	/* TODO: other checking ? */
+
+out:
+	if (bm_na)
+		ntfs_attr_close(bm_na);
+	if (ia_na)
+		ntfs_attr_close(ia_na);
+
+	return ret;
+
+init_all:
+	if (bm_na)
+		ntfs_attr_close(bm_na);
+	if (ia_na)
+		ntfs_attr_close(ia_na);
+
+	ntfsck_initialize_index_attr(ni);
+	fsck_fixes++;
+	return ret;
+}
+
+static int ntfsck_check_file(ntfs_inode *ni)
+{
+	ntfs_volume *vol;
+	ntfs_attr *na = NULL;
+	FILE_ATTR_FLAGS si_flags; /* $STANDARD_INFORMATION flags */
+	BOOL need_fix = FALSE;
+	struct rl_size rls = {0, };
+	int ret = 0;
+
+	if (!ni)
+		return -1;
+
+	vol = ni->vol;
+
+	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
+	if (!na) {
+		ntfs_log_perror("Failed to open $DATA of inode "
+				"%llu", (unsigned long long)ni->mft_no);
+		return -1;
+	}
+
+	if (NAttrNonResident(na)) {
+		if (ntfsck_check_attr_runlist(na, &rls, &need_fix)) {
+			ntfs_log_error("Failed to get $DATA "
+					"attribute in file(%lld)",
+					(unsigned long long)ni->mft_no);
+			ret = -1;
+			goto attr_close;
+		}
+
+		/*
+		 * if need_fix is set to TRUE,
+		 * apply modified runlist to cluster runs.
+		 */
+		if (need_fix == TRUE) {
+			check_failed("$DATA cluster run of inode(%lld) "
+					"corrupted. truncate it",
+					(unsigned long long)ni->mft_no);
+
+			if (ntfsck_ask_repair(vol)) {
+				s64 tr_size;
+
+				/* truncate with calculated size of repaired cluster run */
+				tr_size = rls.vcn << vol->cluster_size_bits;
+				if (ntfsck_truncate_attr(na, tr_size)) {
+					ntfs_log_info("truncate attr failed\n");
+					goto attr_close;
+				}
+
+				ni->allocated_size = na->allocated_size;
+				ni->data_size = na->data_size;
+				ntfs_inode_mark_dirty(ni);
+				fsck_fixes++;
+			}
+			goto attr_close;
+		}
+
+	} else {
+		rls.asize = na->data_size;
+		rls.real_asize = na->allocated_size;
+	}
+
+	si_flags = ni->flags;
+
+	/* check sparse/compressed file */
+	if (rls.real_asize != ((rls.asize + 7) & ~7)) {
+		/* check flags */
+		/* can't recognize SPARSE/COMPRESSED FILE using cluster run */
+		if (!(si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED)) ||
+			!(na->data_flags & (ATTR_IS_SPARSE | ATTR_IS_COMPRESSED))) {
+			check_failed("inode(%llu)'s $STD_INFO flag(%d) $DATA flag(%d)"
+					" does not set SPARSE or COMPRESSED",
+					(unsigned long long)ni->mft_no,
+					si_flags, na->data_flags);
+
+			/* if comression_block_size is not zero, attribute is comressed */
+			if (ntfsck_ask_repair(vol)) {
+				if (na->compression_block_size) {
+					si_flags &= ~FILE_ATTR_SPARSE_FILE;
+					ni->flags = si_flags |= FILE_ATTR_COMPRESSED;
+					na->data_flags &= ~ATTR_IS_SPARSE;
+					na->data_flags |= ATTR_IS_COMPRESSED;
+				} else {
+					si_flags &= ~FILE_ATTR_COMPRESSED;
+					ni->flags = si_flags |= FILE_ATTR_SPARSE_FILE;
+					na->data_flags &= ~ATTR_IS_COMPRESSED;
+					na->data_flags |= ATTR_IS_SPARSE;
+				}
+				ntfs_inode_mark_dirty(ni);
+				NInoFileNameSetDirty(ni);
+				fsck_fixes++;
+			}
+		}
+
+		/* check size */
+		if ((ni->allocated_size != na->compressed_size) ||
+				(na->compressed_size != rls.real_asize)) {
+			/* need to set allocated_size & highest_vcn set */
+			check_failed("Corrupted inode(%llu) compressed size field.\n "
+					" inode allocated size(%llu),"
+					" $DATA compressed(%llu)"
+					" cluster run real allocation(%llu).",
+					(unsigned long long)ni->mft_no,
+					(unsigned long long)ni->allocated_size,
+					(unsigned long long)na->compressed_size,
+					(unsigned long long)rls.real_asize);
+			na->compressed_size = rls.real_asize;
+			ni->allocated_size = na->compressed_size;
+			ntfs_inode_mark_dirty(ni);
+			NInoFileNameSetDirty(ni);
+			fsck_fixes++;
+		}
+	} else {
+		if ((si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED)) ||
+			(na->data_flags & (ATTR_IS_SPARSE | ATTR_IS_COMPRESSED))) {
+			check_failed("inode(%llu)'s $STD_INFO flag(%d) $DATA flag(%d)"
+					" set SPARSE or COMPRESSED",
+					(unsigned long long)ni->mft_no,
+					si_flags, na->data_flags);
+
+			/* if comression_block_size is not zero, attribute is comressed */
+			if (ntfsck_ask_repair(vol)) {
+				si_flags &= ~(FILE_ATTR_COMPRESSED | FILE_ATTR_SPARSE_FILE);
+				ni->flags = si_flags;
+				na->data_flags &= ~(ATTR_IS_COMPRESSED | ATTR_IS_SPARSE);
+
+				ntfs_inode_mark_dirty(ni);
+				NInoFileNameSetDirty(ni);
+				fsck_fixes++;
+			}
+		}
+
+
+		/* check size */
+		if ((ni->allocated_size != na->allocated_size) ||
+				(na->allocated_size != rls.real_asize)) {
+			check_failed("Corrupted inode(%llu) allocated size field.\n "
+					" inode allocated size(%llu),"
+					" $DATA allocated(%llu),"
+					" cluster run(total(%llu):real(%llu) allocation.",
+					(unsigned long long)ni->mft_no,
+					(unsigned long long)ni->allocated_size,
+					(unsigned long long)na->allocated_size,
+					(unsigned long long)rls.asize,
+					(unsigned long long)rls.real_asize);
+			if (ntfsck_ask_repair(vol)) {
+				na->allocated_size = rls.real_asize;
+				ni->allocated_size = na->allocated_size;
+				ntfs_inode_mark_dirty(ni);
+				NInoFileNameSetDirty(ni);
+				fsck_fixes++;
+			}
+		}
+	}
+
+#ifdef UNUSED
+	VCN last_vcn, highest_vcn;
+
+	highest_vcn = sle64_to_cpu(attr->highest_vcn);
+	last_vcn = sle64_to_cpu(attr->allocated_size) >> vol->cluster_size_bits;
+
+	/* check highest_vcn & last_vcn */
+	if (highest_vcn && highest_vcn != last_vcn - 1) {
+		check_failed("Corrupted inode(%llu) $DATA highest vcn field.",
+				(unsigned long long)ni->mft_no);
+		need_fix = TRUE;
+		goto update_mp;
+	}
+#endif
+
+attr_close:
+	/*
+	 * if rl is allocated in ntfsck_decompose_mp(),
+	 * will be freed in ntfs_attr_close()
+	 */
+	ntfs_attr_close(na);
+	return ret;
+}
+
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx)
 {
-	MFT_REF mref;
 	FILE_NAME_ATTR *ie_fn = (FILE_NAME_ATTR *)&ie->key.file_name;
 	int32_t flags;
 	int ret;
-	ntfs_volume *vol;
-
-	vol = ni->vol;
-	mref = le64_to_cpu(ie->indexed_file);
 
 	/* Check file type */
 	flags = ntfsck_check_file_type(ni, ictx, ie_fn);
 	if (flags < 0)
 		goto remove_index;
 
-	/* TODO: if it is normal file, then check $DATA */
-
-	/* TODO: if it is directory, then check $INDEX_ROOT/$INDEX_ALLOCATION/$BITMAP */
+	if (flags & FILE_ATTR_I30_INDEX_PRESENT) {
+		ret = ntfsck_check_directory(ni);
+		if (ret)
+			goto remove_index;
+	} else {
+		ret = ntfsck_check_file(ni);
+		if (ret)
+			goto remove_index;
+	}
 
 	/* check $FILE_NAME */
 	ret = ntfsck_check_file_name_attr(ni, ie, ictx);
 	if (ret < 0)
 		goto remove_index;
 
+#ifdef UNUSED /* temporary comment out */
 	ret = ntfsck_check_non_resident_data_size(ni);
+#endif
 
 	return STATUS_OK;
 
@@ -1330,7 +2169,7 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 	struct dir *dir;
 	MFT_REF mref;
 	int ret = 0;
-	FILE_NAME_ATTR *ie_fn = (FILE_NAME_ATTR *)&ie->key;
+	FILE_NAME_ATTR *ie_fn = &ie->key.file_name;
 
 	if (!ie)
 		return -1;
@@ -1438,7 +2277,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		ctx = ntfs_attr_get_search_ctx(dir->ni, NULL);
 		if (!ctx)
-			/* continue ?? */
 			goto err_out;
 
 		/* Find the index root attribute in the mft record. */
