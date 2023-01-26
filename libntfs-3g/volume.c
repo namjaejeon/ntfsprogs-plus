@@ -658,16 +658,6 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	if (!vol)
 		goto error_exit;
 
-	if (flags & NTFS_MNT_FSCK)
-		NVolSetFsck(vol);
-
-	if (flags & NTFS_MNT_FS_YES_REPAIR)
-		NVolSetFsYesRepair(vol);
-	else if (flags & NTFS_MNT_FS_ASK_REPAIR)
-		NVolSetFsAskRepair(vol);
-	else if (flags & NTFS_MNT_FS_AUTO_REPAIR)
-		NVolSetFsAutoRepair(vol);
-	
 	/* Create the default upcase table. */
 	vol->upcase_len = ntfs_upcase_build_default(&vol->upcase);
 	if (!vol->upcase_len || !vol->upcase)
