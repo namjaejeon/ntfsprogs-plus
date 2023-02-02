@@ -553,6 +553,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			}
 
 			/* TODO: Move orphan mft entry to lost+found directory */
+			ntfs_inode_attach_all_extents(ni);
 			while (ni->nr_extents)
 				if (ntfs_mft_record_free(vol, *(ni->extent_nis))) {
 					ntfs_log_error("Failed to free extent MFT record.  "
@@ -2203,6 +2204,7 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 			goto err_out;
 		}
 
+		ntfs_inode_attach_all_extents(ni);
 		while (ext_idx < ni->nr_extents) {
 			if (ntfsck_mft_bmp_bit_set(ni->extent_nis[ext_idx]->mft_no)) {
 				ret = -1;
