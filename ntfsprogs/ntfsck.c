@@ -186,7 +186,7 @@ unsigned int fsck_lcn_bitmap_size;
 
 static int ntfsck_check_non_resident_data_size(ntfs_inode *ni);
 static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
-		INDEX_ENTRY *ie, ntfs_attr_search_ctx *actx);
+		FILE_NAME_ATTR *ie_fn, ntfs_attr_search_ctx *actx);
 
 char ntfsck_mft_bmp_bit_get(const u64 bit)
 {
@@ -684,14 +684,13 @@ void ntfsck_debug_print_fn_attr(ntfs_attr_search_ctx *actx,
  * @ie : index entry of file (parent's index)
  * @ictx : index context for lookup, not for ni. It's context of ni's parent
  */
-static int ntfsck_check_file_name_attr(ntfs_inode *ni, INDEX_ENTRY *ie,
+static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		ntfs_index_context *ictx)
 {
 	ntfs_volume *vol = ni->vol;
 	char *filename;
 	int ret = 0;
 	BOOL need_fix = FALSE;
-	FILE_NAME_ATTR *ie_fn = &ie->key.file_name;
 	FILE_NAME_ATTR *fn;
 	ntfs_attr_search_ctx *actx;
 
@@ -706,7 +705,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, INDEX_ENTRY *ie,
 
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 
-	fn = ntfsck_find_file_name_attr(ni, ie, actx);
+	fn = ntfsck_find_file_name_attr(ni, ie_fn, actx);
 	if (!fn) {
 		/* NOT FOUND MFT/$FN */
 		check_failed("Filename(%s) in INDEX ENTRY is not found in inode(%llu)",
@@ -1141,10 +1140,9 @@ close_na:
  * outside of this function)
  */
 static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
-		INDEX_ENTRY *ie, ntfs_attr_search_ctx *actx)
+		FILE_NAME_ATTR *ie_fn, ntfs_attr_search_ctx *actx)
 {
 	FILE_NAME_ATTR *fn = NULL;
-	FILE_NAME_ATTR *ie_fn = &ie->key.file_name;
 	ATTR_RECORD *attr;
 	ntfs_volume *vol = ni->vol;
 	int ret;
@@ -1307,33 +1305,31 @@ struct rl_size {
 
 /*
  * check runlist size and set/clear bitmap of runlist.
- * Set bit until encountering lcn whose value is less than LCN_HOLE,
- * after that, clear bit for lcn.
+ * Set or clear bit until encountering lcn whose value is less than LCN_HOLE,
+ * Clear bit for invalid lcn.
  * (TODO: check duplicated, check $BITMAP if exist)
  *
+ * @ni : MFT entry inode
  * @rl : runlist to check
- * @rls : structure for runlist length, it can contain allocated size and
- *	  real allocated size
+ * @set_bit : bit value for set/clear
+ * @rls : structure for runlist length, it contains allocated size and
+ *	  real allocated size. it may be NULL, don't return calculated size.
  */
-static int ntfsck_check_runlist(ntfs_attr *na, struct rl_size *rls)
+static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
+		struct rl_size *rls)
 {
-	ntfs_inode *ni;
 	ntfs_volume *vol;
-	runlist *rl = NULL;
 	s64 rl_asize = 0;	/* rl allocated size (including HOLE length) */
 	s64 rl_real_asize = 0;	/* rl real allocated size */
 	s64 rsize;		/* a cluster run size */
 	VCN valid_vcn = 0;
 	int i = 0;
-	u8 set_bit = 1;	/* set or clear bit */
 
-	if (!na || !na->ni)
+	if (!ni || !rl)
 		return STATUS_ERROR;
 
-	ni = na->ni;
 	vol = ni->vol;
 
-	rl = na->rl;
 	while (rl && rl[i].length) {
 		if (rl[i].lcn > LCN_HOLE) {
 			ntfs_log_trace("Cluster run of mtf entry(%ld): "
@@ -1394,9 +1390,11 @@ static int ntfsck_check_runlist(ntfs_attr *na, struct rl_size *rls)
 	if (!valid_vcn)
 		valid_vcn = rl_asize >> vol->cluster_size_bits;
 
-	rls->vcn = valid_vcn;
-	rls->asize = rl_asize;
-	rls->real_asize = rl_real_asize;
+	if (rls) {
+		rls->vcn = valid_vcn;
+		rls->asize = rl_asize;
+		rls->real_asize = rl_real_asize;
+	}
 
 	return STATUS_OK;
 }
@@ -1695,9 +1693,9 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 
 	na->rl = rl;
 
-	ret = ntfsck_check_runlist(na, rls);
+	ret = ntfsck_setbit_runlist(na->ni, na->rl, 1, rls);
 	if (ret)
-		return -1;
+		return STATUS_ERROR;
 
 #ifdef _DEBUG
 	ntfs_log_info("After =========================\n");
@@ -2155,7 +2153,7 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	}
 
 	/* check $FILE_NAME */
-	ret = ntfsck_check_file_name_attr(ni, ie, ictx);
+	ret = ntfsck_check_file_name_attr(ni, ie_fn, ictx);
 	if (ret < 0)
 		goto remove_index;
 
@@ -2193,8 +2191,11 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 		/* skip checking for system files */
 		if (!(ni->flags & FILE_ATTR_SYSTEM)) {
 			ret = ntfsck_check_inode(ni, ie, ictx);
-			if (ret)
+			if (ret) {
+				ntfs_log_info("ntfsck_check_inode(%llu) failed\n",
+						(unsigned long long)ni->mft_no);
 				goto remove_index;
+			}
 		}
 
 		if (ntfsck_mft_bmp_bit_set(MREF(mref))) {
