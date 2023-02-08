@@ -252,8 +252,8 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 
 			if (ntfsck_ask_repair(vol)) {
 				m->magic = magic_FILE;
-				fsck_fixes++;
 				fixed = TRUE;
+				fsck_err_fixed();
 			} else
 				goto err_out;
 		} else if (!NVolNoFixupWarn(vol))
@@ -271,8 +271,8 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 				     le32_to_cpu(m->bytes_allocated));
 			if (ntfsck_ask_repair(vol)) {
 				m->bytes_allocated = cpu_to_le32(vol->mft_record_size);
-				fsck_fixes++;
 				fixed = TRUE;
+				fsck_err_fixed();
 			} else
 				goto err_out;
 		} else {
@@ -286,10 +286,10 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	/* check bytes_in_use is aligned */
 	biu = le32_to_cpu(m->bytes_in_use);
 	if (biu & 7) {
-		ntfs_log_error("Used size of MFT record is badly aligned "
+		check_failed("Used size of MFT record is badly aligned "
 				"in record %llu\n",
 			       (unsigned long long)MREF(mref));
-		fsck_errors++;
+		fsck_err_found();
 		goto err_out;
 	}
 
@@ -298,7 +298,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		ntfs_log_error("Record %llu has corrupt in-use size "
 			       "(%u > %u)\n", (unsigned long long)MREF(mref),
 			       (int)biu, (int)vol->mft_record_size);
-		fsck_errors++;
+		fsck_err_found();
 		goto err_out;
 	}
 
@@ -310,7 +310,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	if (offset & 7) {
 		ntfs_log_error("Attributes badly aligned in record %llu\n",
 			       (unsigned long long)MREF(mref));
-		fsck_errors++;
+		fsck_err_found();
 		goto err_out;
 	}
 
@@ -318,7 +318,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		ntfs_log_error("MFT record(%llu)'s attribute start offset "
 				"is corrupted\n",
 				(unsigned long long)MREF(mref));
-		fsck_errors++;
+		fsck_err_found();
 		goto err_out;
 	}
 
@@ -327,7 +327,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	if (p2n(a) < p2n(m) || (char *)a > (char *)m + vol->mft_record_size) {
 		ntfs_log_error("Record %llu is corrupt\n",
 			       (unsigned long long)MREF(mref));
-		fsck_errors++;
+		fsck_err_found();
 		goto err_out;
 	}
 
@@ -352,7 +352,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 			} else {
 				ntfs_log_error("Corrupted MFT record %llu\n",
 				       (unsigned long long)MREF(mref));
-				fsck_errors++;
+				fsck_err_found();
 				goto err_out;
 			}
 		}

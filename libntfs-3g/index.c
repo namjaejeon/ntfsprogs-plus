@@ -478,8 +478,8 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 			       (unsigned long long)inum);
 		if (ntfsck_ask_repair(vol)) {
 			ib->index_block_vcn = cpu_to_sle64(vcn);
-			fsck_fixes++;
 			fixed = TRUE;
+			fsck_err_fixed();
 		} else
 			return -1;
 	}
@@ -493,8 +493,8 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 		if (ntfsck_ask_repair(vol)) {
 			ib->index.allocated_size = cpu_to_le32(block_size -
 				offsetof(INDEX_BLOCK, index));
-			fsck_fixes++;
 			fixed = TRUE;
+			fsck_err_fixed();
 		} else
 			return -1;
 	}
@@ -604,7 +604,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 					ictx->ir->index.ih_flags = SMALL_INDEX;
 
 				ret = 1;
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 		}
 	}
@@ -623,7 +623,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 			check_failed("INDEX_ENTRY_NODE is not set in index entry");
 			if (ntfsck_ask_repair(vol)) {
 				ie->ie_flags |= INDEX_ENTRY_NODE;
-				fsck_fixes++;
+				fsck_err_fixed();
 				ret = 1;
 			} else
 				return -1;
@@ -646,7 +646,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 			if (index_off <= le16_to_cpu(ie->length)) {
 				ie->key_length = index_off;
-				fsck_fixes++;
+				fsck_err_fixed();
 				ret = 1;
 			} else
 				ret = -1;
@@ -677,9 +677,8 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 
 		if (ret == -1) {
-			fsck_errors++;
+			fsck_err_found();
 			if (ntfsck_ask_repair(vol)) {
-				fsck_fixes++;
 				if (collation_rule == COLLATION_FILE_NAME) {
 					ie->key.file_name.file_name_length = ie->key_length / sizeof(ntfschar);
 				} else {
@@ -690,6 +689,7 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 					ie->data_length = cpu_to_le16(data_length);
 				}
+				fsck_err_fixed();
 				ret = 1;
 			}
 		}
@@ -2222,7 +2222,7 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 			if (ret > 0) {
 				ret = ntfsck_update_index_entry(ictx);
 				if (ret) {
-					fsck_errors++;
+					fsck_err_failed();
 					entry = NULL;
 				}
 			}
@@ -2341,7 +2341,7 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 		if (ret > 0) {
 			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
-				fsck_errors++;
+				fsck_err_failed();
 				return NULL;
 			}
 		}
@@ -2369,7 +2369,7 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 		if (ret > 0) {
 			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
-				fsck_errors++;
+				fsck_err_failed();
 				next = (INDEX_ENTRY*)NULL;
 			}
 		}

@@ -616,7 +616,7 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 				ntfs_log_error("Boot sector: failed to fix boot sector\n");
 				return res;
 			} else
-				fsck_fixes++;
+				fsck_err_fixed();
 		} else if (res) {
 			return 1;
 		}
@@ -1178,7 +1178,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 							use_mirr ? "" : "Mirr");
 					goto io_error_exit;
 				}
-				fsck_fixes++;
+				fsck_err_fixed();
 			} else {
 				goto io_error_exit;
 			}

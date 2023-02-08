@@ -55,12 +55,36 @@ typedef struct _ntfs_volume ntfs_volume;
 extern int fsck_errors;
 extern int fsck_fixes;
 
+/* It is called when found filesystem inconsistency */
 #define check_failed(FORMAT, ARGS...) \
 	do { \
-		fsck_errors++; \
+		fsck_err_found(); \
 		ntfs_log_redirect(__FUNCTION__, __FILE__, __LINE__, \
 				NTFS_LOG_LEVEL_ERROR, NULL, FORMAT, ##ARGS); \
-	} while (0);
+	} while (0)
+
+#define fsck_err_found() \
+	do { \
+		fsck_errors++; \
+	} while (0)
+
+/* It is called when repairing is failed */
+#define fsck_err_failed() \
+	do { \
+		fsck_errors++; \
+	} while (0)
+
+/* It is called when it turns out that doesn't need to repair */
+#define fsck_err_canceled() \
+	do { \
+		fsck_errors--; \
+	} while (0)
+
+/* It is called after repair completed */
+#define fsck_err_fixed() \
+	do { \
+		fsck_fixes++; \
+	} while (0)
 
 /**
  * enum ntfs_mount_flags -
