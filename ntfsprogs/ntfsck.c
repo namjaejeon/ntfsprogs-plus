@@ -300,7 +300,7 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 					if (ntfsck_ask_repair(vol)) {
 						ntfs_bit_set(bm, i * 8 + cl % 8, !lbmp_bit);
 						repair = TRUE;
-						fsck_fixes++;
+						fsck_err_fixed();
 					}
 				}
 			}
@@ -538,7 +538,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 						errno);
 				return;
 			}
-			fsck_fixes++;
+			fsck_err_fixed();
 		}
 		return;
 	}
@@ -548,7 +548,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 				mft_num);
 		if (ntfsck_ask_repair(vol)) {
 			if (!ntfsck_add_index_entry_orphaned_file(vol, ni->mft_no)) {
-				fsck_fixes++;
+				fsck_err_fixed();
 				goto update_lcn_bitmap;
 			}
 
@@ -562,7 +562,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			if (ntfs_mft_record_free(vol, ni))
 				ntfs_log_error("Failed to free MFT record.  "
 						"Leaving inconsistent metadata. Run chkdsk.\n");
-			fsck_fixes++;
+			fsck_err_fixed();
 			return;
 		}
 	}
@@ -824,7 +824,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 				ntfs_index_entry_mark_dirty(ictx);
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 		}
 
@@ -876,7 +876,7 @@ fix_index:
 			}
 
 			ntfs_index_entry_mark_dirty(ictx);
-			fsck_fixes++;
+			fsck_err_fixed();
 		}
 	}
 
@@ -1023,7 +1023,7 @@ retry:
 			if (ntfsck_ask_repair(vol)) {
 				if (ntfs_non_resident_attr_shrink(na, newsize))
 					goto close_na;
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 #endif
 		} else {
@@ -1118,7 +1118,7 @@ retry:
 				}
 				ntfs_attr_put_search_ctx(actx);
 				ntfs_inode_mark_dirty(ni);
-				fsck_fixes++;
+				fsck_err_fixed();
 				goto retry;
 			}
 		}
@@ -1214,7 +1214,7 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
 				if (ntfsck_ask_repair(vol)) {
 					ntfs_index_entry_mark_dirty(ictx);
-					fsck_fixes++;
+					fsck_err_fixed();
 				}
 			}
 		} else {
@@ -1233,7 +1233,7 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 			ni->mrec->flags &= ~MFT_RECORD_IS_DIRECTORY;
 			if (ntfsck_ask_repair(vol)) {
 				ntfs_inode_mark_dirty(ni);
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 
 			if (ie_flags & FILE_ATTR_I30_INDEX_PRESENT) {
@@ -1245,7 +1245,7 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 				ie_fn->file_attributes &= ~FILE_ATTR_I30_INDEX_PRESENT;
 				if (ntfsck_ask_repair(vol)) {
 					ntfs_index_entry_mark_dirty(ictx);
-					fsck_fixes++;
+					fsck_err_fixed();
 				}
 			}
 #endif
@@ -1264,7 +1264,7 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 				ie_fn->file_attributes &= ~FILE_ATTR_I30_INDEX_PRESENT;
 				if (ntfsck_ask_repair(vol)) {
 					ntfs_index_entry_mark_dirty(ictx);
-					fsck_fixes++;
+					fsck_err_fixed();
 				}
 			}
 		} else {
@@ -1289,7 +1289,7 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 			ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
 			if (ntfsck_ask_repair(vol)) {
 				ntfs_index_entry_mark_dirty(ictx);
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 		}
 	}
@@ -1471,7 +1471,7 @@ static runlist_element *ntfsck_decompose_mp(ntfs_attr *na, BOOL *need_fix)
 							(unsigned long long)ni->mft_no,
 							attr->type);
 				}
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 			continue;
 		}
@@ -1512,7 +1512,7 @@ static runlist_element *ntfsck_decompose_mp(ntfs_attr *na, BOOL *need_fix)
 								(unsigned long long)ni->mft_no,
 								attr->type);
 					}
-					fsck_fixes++;
+					fsck_err_fixed();
 					continue;
 				}
 			}
@@ -1529,7 +1529,7 @@ static runlist_element *ntfsck_decompose_mp(ntfs_attr *na, BOOL *need_fix)
 				if (ntfsck_ask_repair(vol)) {
 					attr->lowest_vcn = 0;
 					NInoSetDirty(ni);
-					fsck_fixes++;
+					fsck_err_fixed();
 				}
 				break;
 			}
@@ -1834,7 +1834,7 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 			if (ntfsck_truncate_attr(ia_na, tr_size))
 				goto init_all;
 
-			fsck_fixes++;
+			fsck_err_fixed();
 		}
 	}
 
@@ -1889,7 +1889,7 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 				if (ntfsck_truncate_attr(bm_na, tr_size))
 					goto init_all;
 
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 		}
 	}
@@ -1921,7 +1921,7 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 				(unsigned long long)ni->mft_no);
 		if (ntfsck_ask_repair(vol)) {
 			ntfs_attr_pwrite(bm_na, pos, 8, fsck_ibm + pos);
-			fsck_fixes++;
+			fsck_err_fixed();
 		}
 		pos += 8;
 	}
@@ -1947,7 +1947,7 @@ init_all:
 		ntfs_attr_close(ia_na);
 
 	ntfsck_initialize_index_attr(ni);
-	fsck_fixes++;
+	fsck_err_fixed();
 	return ret;
 }
 
@@ -2003,7 +2003,7 @@ static int ntfsck_check_file(ntfs_inode *ni)
 				ni->allocated_size = na->allocated_size;
 				ni->data_size = na->data_size;
 				ntfs_inode_mark_dirty(ni);
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 			goto attr_close;
 		}
@@ -2041,7 +2041,7 @@ static int ntfsck_check_file(ntfs_inode *ni)
 				}
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 		}
 
@@ -2061,7 +2061,7 @@ static int ntfsck_check_file(ntfs_inode *ni)
 			ni->allocated_size = na->compressed_size;
 			ntfs_inode_mark_dirty(ni);
 			NInoFileNameSetDirty(ni);
-			fsck_fixes++;
+			fsck_err_fixed();
 		}
 	} else {
 		if ((si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED)) ||
@@ -2079,7 +2079,7 @@ static int ntfsck_check_file(ntfs_inode *ni)
 
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 		}
 
@@ -2101,7 +2101,7 @@ static int ntfsck_check_file(ntfs_inode *ni)
 				ni->allocated_size = na->allocated_size;
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 		}
 	}
@@ -2243,7 +2243,7 @@ remove_index:
 				ntfs_log_verbose("Index entry of inode(%llu:%s) is deleted\n",
 						(unsigned long long)MREF(mref), filename);
 				ret = 1;
-				fsck_fixes++;
+				fsck_err_fixed();
 			}
 			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 
@@ -2349,7 +2349,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		if (ret > 0) {
 			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
-				fsck_errors++;
+				fsck_err_failed();
 				goto err_out;
 			}
 		}
