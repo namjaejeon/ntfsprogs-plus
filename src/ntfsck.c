@@ -2387,114 +2387,13 @@ err_out:
 	return -1;
 }
 
-/**
- * list_dir_entry
- *
- * FIXME: Should we print errors as we go along? (AIA)
- */
-static int list_dir_entry(struct ntfsls_dirent *dirent, const ntfschar *name,
-			  const int name_len, const int name_type,
-			  const s64 pos __attribute__((unused)),
-			  const MFT_REF mref, const unsigned int dt_type)
-{
-	char *filename = NULL;
-	int result = 0;
-	struct dir *dir = NULL;
-	ntfs_inode *ni;
-	ntfs_volume *vol = dirent->vol;
-
-	filename = calloc(1, MAX_PATH);
-	if (!filename)
-		return -1;
-
-	if (ntfs_ucstombs(name, name_len, &filename, MAX_PATH) < 0) {
-		ntfs_log_error("Cannot represent filename in current locale.\n");
-		goto free;
-	}
-
-	if (MREF(mref) < FILE_first_user)
-		goto free;
-
-	ntfs_log_verbose("%7llu %s\n", (unsigned long long)MREF(mref), filename);
-	ni = ntfs_inode_open(vol, MREF(mref));
-	if (ni) {
-		if (dt_type == NTFS_DT_DIR &&
-		    strcmp(filename, ".") && strcmp(filename, "./") &&
-		    strcmp(filename, "..") && strcmp(filename, "../")) {
-			dir = (struct dir *)calloc(1, sizeof(struct dir));
-			if (!dir) {
-				ntfs_log_error("Failed to allocate for subdir.\n");
-				result = -1;
-				goto free;
-			}
-
-			dir->ni = ni;
-			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
-		}
-	}
-
-free:
-	free(filename);
-	return result;
-}
-
-static int ntfsck_scan_index_entries_bitmap(ntfs_volume *vol)
-{
-	ntfs_inode *ni;
-	struct dir *dir;
-	struct ntfsls_dirent dirent;
-	int result;
-
-	dir = (struct dir *)calloc(1, sizeof(struct dir));
-	if (!dir) {
-		ntfs_log_error("Failed to allocate for subdir.\n");
-		goto error_exit;
-	}
-
-	ni = ntfs_inode_open(vol, FILE_root);
-	if (!ni) {
-		ntfs_log_error("Couldn't open the root directory.\n");
-		free(dir);
-		return 1;
-	}
-
-	dir->ni = ni;
-	ntfs_list_add(&dir->list, &ntfs_dirs_list);
-
-	/* Scan all index entries through mft entries */
-	while (!ntfs_list_empty(&ntfs_dirs_list)) {
-		s64 pos = 0;
-
-		dir = ntfs_list_entry(ntfs_dirs_list.next, struct dir, list);
-
-		memset(&dirent, 0, sizeof(dirent));
-                dirent.vol = vol;
-		result = ntfs_readdir(dir->ni, &pos, &dirent, (ntfs_filldir_t)list_dir_entry);
-		if (result)
-			check_failed("ntfs_readdir failed(%d)\n", errno);
-
-		ntfs_inode_close(dir->ni);
-		ntfs_list_del(&dir->list);
-		free(dir);
-	}
-
-	return 0;
-error_exit:
-	return 1;
-}
-
-
 static int ntfsck_scan_index_entries(ntfs_volume *vol)
 {
 	int result;
 
 	ntfs_log_info("Parse #%d: Check index entries in volume...\n", parse_count++);
 
-	result = ntfsck_scan_index_entries_btree(vol);
-	if (!result)
-		result = ntfsck_scan_index_entries_bitmap(vol);
-
-	return result;
+	return ntfsck_scan_index_entries_btree(vol);
 }
 
 static void ntfsck_check_mft_records(ntfs_volume *vol)
