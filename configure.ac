@@ -24,9 +24,9 @@
 
 # Autoconf
 AC_PREREQ(2.59)
-AC_INIT([ntfs-3g],[2022.10.3],[ntfs-3g-devel@lists.sf.net])
+AC_INIT([ntfsprogs],[2023.2.9],[ntfsprogs-devel@lists.sf.net])
 LIBNTFS_3G_VERSION="89"
-AC_CONFIG_SRCDIR([src/ntfs-3g.c])
+AC_CONFIG_SRCDIR([src/ntfsck.c])
 
 # Environment
 AC_CANONICAL_HOST
@@ -65,18 +65,6 @@ AC_ARG_ENABLE(
 	[AS_HELP_STRING([--enable-really-static],[create fully static binaries])],
 	,
 	[enable_really_static="no"]
-)
-
-AC_ARG_ENABLE(
-	[mount-helper],
-	[AS_HELP_STRING([--enable-mount-helper],[install mount helper @<:@default=enabled for linux@:>@])],
-	,
-	[
-		case "${target_os}" in
-			linux*) enable_mount_helper="yes" ;;
-			*) enable_mount_helper="no" ;;
-		esac
-	]
 )
 
 AC_ARG_ENABLE(
@@ -134,21 +122,6 @@ AC_ARG_ENABLE(
 	[AS_HELP_STRING([--disable-device-default-io-ops],[install default IO ops])],
 	,
 	[enable_device_default_io_ops="yes"]
-)
-
-AC_ARG_ENABLE(
-	[ntfs-3g],
-	[AS_HELP_STRING([--disable-ntfs-3g],[disable the ntfs-3g FUSE driver])],
-	,
-	[enable_ntfs_3g="yes"]
-)
-
-AC_ARG_ENABLE(
-	[ntfsprogs],
-	[AS_HELP_STRING([--disable-ntfsprogs],[disable ntfsprogs utilities
-		       (default=no)])],
-	,
-	[enable_ntfsprogs="yes"]
 )
 
 AC_ARG_ENABLE(crypto,
@@ -226,40 +199,6 @@ case "${target}" in
 	;;
 esac
 
-if test "x${enable_ntfs_3g}" != "xyes"; then
-	with_fuse="none"
-elif test "x${with_fuse}" = "x"; then
-	AC_MSG_CHECKING([fuse compatibility])
-	case "${target_os}" in
-	linux*|solaris*)
-		AC_ARG_WITH(
-			[fuse],
-			[AS_HELP_STRING([--with-fuse=<internal|external>],[Select FUSE library: internal or external @<:@default=internal@:>@])],
-			,
-			[with_fuse="internal"]
-		)
-		;;
-	darwin*|netbsd*|kfreebsd*-gnu)
-		with_fuse="external"
-		;;
-	freebsd*)
-		AC_MSG_ERROR([Please see FreeBSD support at http://www.freshports.org/sysutils/fusefs-ntfs])
-		;;
-	*)
-		AC_MSG_ERROR([ntfs-3g can be built for Linux, FreeBSD, Mac OS X, NetBSD, and Solaris only.])
-		;;
-	esac
-	AC_MSG_RESULT([${with_fuse}])
-fi
-
-case "${target_os}" in
-solaris*)
-	if test "x$GCC" != "xyes" ; then
-		AC_MSG_ERROR([ntfs-3g can be built only with gcc on Solaris. Install it by 'pkg install gcc-dev' and retry.)])
-	fi
-	;;
-esac
-
 if test "${enable_ldscript}" = "yes"; then
 	AC_MSG_CHECKING([Output format])
 	OUTPUT_FORMAT="$(${CC} ${CFLAGS} ${LDFLAGS} -Wl,--verbose 2>&1 | ${SED} -n 's/^OUTPUT_FORMAT("\([[^"]]*\)",.*/\1/p')"
@@ -272,64 +211,6 @@ if test "${enable_ldscript}" = "yes"; then
 fi
 
 # Libraries
-if test "${with_fuse}" = "internal"; then
-	AC_CHECK_LIB(
-		[pthread],
-		[pthread_create],
-		[LIBFUSE_LITE_LIBS="${LIBFUSE_LITE_LIBS} -lpthread"],
-		[AC_MSG_ERROR([Cannot find pthread library])]
-	)
-	AC_DEFINE(
-		[_REENTRANT],
-		[1],
-		[Required define if using POSIX threads]
-	)
-	# required so that we re-compile anything
-	AC_DEFINE(
-		[FUSE_INTERNAL],
-		[1],
-		[Define to 1 if using internal fuse]
-	)
-
-	AC_MSG_CHECKING([Solaris OS])
-	AC_LANG_PUSH([C])
-	AC_COMPILE_IFELSE(
-		[
-			AC_LANG_SOURCE(
-				[[#if !((defined(sun) || defined(__sun)) && (defined(__SVR4) || defined(__svr4__)))]]
-				[[#error "Not a Solaris system."]]
-				[[#endif]]
-			)
-		],
-		[
-			AC_MSG_RESULT([yes])
-			LIBFUSE_LITE_CFLAGS="${LIBFUSE_LITE_CFLAGS} -std=c99 -D__SOLARIS__ -D_XOPEN_SOURCE=600 -D__EXTENSIONS__"
-			LIBFUSE_LITE_LIBS="${LIBFUSE_LITE_LIBS} -lxnet"
-		],
-		[
-			AC_MSG_RESULT([no])
-		]
-	)
-	AC_LANG_POP([C])
-elif test "${with_fuse}" = "external"; then
-	if test -z "$PKG_CONFIG"; then
-		AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
-	fi
-	test "x${PKG_CONFIG}" = "xno" && AC_MSG_ERROR([pkg-config wasn't found! Please install from your vendor, or see http://pkg-config.freedesktop.org/wiki/])
-	# Libraries often install their metadata .pc files in directories
-	# not searched by pkg-config. Let's workaround this. 
-	export PKG_CONFIG_PATH=${PKG_CONFIG_PATH}:/lib/pkgconfig:/usr/lib/pkgconfig:/opt/gnome/lib/pkgconfig:/usr/share/pkgconfig:/usr/local/lib/pkgconfig:$prefix/lib/pkgconfig:/opt/gnome/share/pkgconfig:/usr/local/share/pkgconfig
-	PKG_CHECK_MODULES(
-		[FUSE_MODULE],
-		[fuse >= 2.6.0],
-		,
-		[
-			AC_MSG_ERROR([FUSE >= 2.6.0 was not found. Either older FUSE is still present, or FUSE is not fully installed (e.g. fuse, libfuse, libfuse2, libfuse-dev, etc packages). Source code: http://fuse.sf.net])
-		]
-	)
-	FUSE_LIB_PATH=`$PKG_CONFIG --libs-only-L fuse | sed -e 's,/[/]*,/,g' -e 's,[ ]*$,,'`
-fi
-
 # Autodetect whether we can build crypto stuff or not.
 compile_crypto=false
 if test "$enable_crypto" != "no"; then
@@ -617,24 +498,18 @@ AC_SUBST([rootbindir])
 AC_SUBST([rootsbindir])
 AC_SUBST([rootlibdir])
 AC_SUBST([LIBNTFS_3G_VERSION])
-AC_SUBST([LIBFUSE_LITE_CFLAGS])
-AC_SUBST([LIBFUSE_LITE_LIBS])
 AC_SUBST([MKNTFS_CPPFLAGS])
 AC_SUBST([MKNTFS_LIBS])
 AC_SUBST([LIBNTFS_CPPFLAGS])
 AC_SUBST([LIBNTFS_LIBS])
 AC_SUBST([NTFSPROGS_STATIC_LIBS])
 AC_SUBST([OUTPUT_FORMAT])
-AM_CONDITIONAL([FUSE_INTERNAL], [test "${with_fuse}" = "internal"])
 AM_CONDITIONAL([GENERATE_LDSCRIPT], [test "${enable_ldscript}" = "yes"])
 AM_CONDITIONAL([WINDOWS], [test "${WINDOWS}" = "yes"])
 AM_CONDITIONAL([NTFS_DEVICE_DEFAULT_IO_OPS], [test "${enable_device_default_io_ops}" = "yes"])
 AM_CONDITIONAL([RUN_LDCONFIG], [test "${enable_ldconfig}" = "yes"])
 AM_CONDITIONAL([REALLYSTATIC], [test "${enable_really_static}" = "yes"])
 AM_CONDITIONAL([INSTALL_LIBRARY], [test "${enable_library}" = "yes"])
-AM_CONDITIONAL([ENABLE_MOUNT_HELPER], [test "${enable_mount_helper}" = "yes"])
-AM_CONDITIONAL([ENABLE_NTFS_3G], [test "${enable_ntfs_3g}" = "yes"])
-AM_CONDITIONAL([ENABLE_NTFSPROGS], [test "${enable_ntfsprogs}" = "yes"])
 AM_CONDITIONAL([ENABLE_EXTRAS], [test "${enable_extras}" = "yes"])
 AM_CONDITIONAL([ENABLE_QUARANTINED], [test "${enable_quarantined}" = "yes"])
 AM_CONDITIONAL([DISABLE_PLUGINS], [test "${disable_plugins}" != "no"])
@@ -654,36 +529,29 @@ fi
 AC_CONFIG_FILES([
 	Makefile
 	include/Makefile
-	include/fuse-lite/Makefile
 	include/ntfs-3g/Makefile
-	libfuse-lite/Makefile
 	libntfs-3g/Makefile
 	libntfs-3g/libntfs-3g.pc
 	libntfs-3g/libntfs-3g.script.so
-	ntfsprogs/Makefile
-	ntfsprogs/mkntfs.8
-	ntfsprogs/ntfscat.8
-	ntfsprogs/ntfsclone.8
-	ntfsprogs/ntfscluster.8
-	ntfsprogs/ntfscmp.8
-	ntfsprogs/ntfscp.8
-	ntfsprogs/ntfsfix.8
-	ntfsprogs/ntfsinfo.8
-	ntfsprogs/ntfslabel.8
-	ntfsprogs/ntfsls.8
-	ntfsprogs/ntfsprogs.8
-	ntfsprogs/ntfsresize.8
-	ntfsprogs/ntfsundelete.8
-	ntfsprogs/ntfsdecrypt.8
-	ntfsprogs/ntfswipe.8
-	ntfsprogs/ntfstruncate.8
-	ntfsprogs/ntfsfallocate.8
-	ntfsprogs/ntfsrecover.8
-	ntfsprogs/ntfsusermap.8
-	ntfsprogs/ntfssecaudit.8
 	src/Makefile
-	src/ntfs-3g.8
-	src/ntfs-3g.probe.8
+	src/mkntfs.8
+	src/ntfscat.8
+	src/ntfsclone.8
+	src/ntfscluster.8
+	src/ntfscmp.8
+	src/ntfscp.8
+	src/ntfsinfo.8
+	src/ntfslabel.8
+	src/ntfsls.8
+	src/ntfsprogs.8
+	src/ntfsresize.8
+	src/ntfsundelete.8
+	src/ntfsdecrypt.8
+	src/ntfswipe.8
+	src/ntfstruncate.8
+	src/ntfsfallocate.8
+	src/ntfsusermap.8
+	src/ntfssecaudit.8
 ])
 AC_OUTPUT
 
@@ -704,5 +572,5 @@ EOF
 	fi
 fi
 
-echo "You can type now 'make' to build ntfs-3g."
+echo "You can type now 'make' to build ntfsprogs."
 
