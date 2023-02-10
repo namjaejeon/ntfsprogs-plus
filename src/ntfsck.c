@@ -219,8 +219,11 @@ int ntfsck_mft_bmp_bit_set(u64 mft_no)
 
 		fsck_mft_bmp = ntfs_realloc(fsck_mft_bmp,
 				fsck_mft_bmp_size);
-		if (!fsck_mft_bmp)
+		if (!fsck_mft_bmp) {
+			ntfs_log_perror("Can't extend mft bitmap memory(%llu)\n",
+					(unsigned long long)mft_no);
 			return -ENOMEM;
+		}
 		memset(fsck_mft_bmp + off, 0, fsck_mft_bmp_size - off);
 	}
 
@@ -282,7 +285,7 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 		for (i = 0; i < count; i++, pos++) {
 			s64 cl;  /* current cluster */
 
-			if (pos > fsck_lcn_bitmap_size)
+			if (pos >= fsck_lcn_bitmap_size)
 				continue;
 
 			if (fsck_lcn_bitmap[pos] == bm[i])
@@ -335,6 +338,28 @@ static void ntfsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
 		ntfs_bit_set(bm, pos++, bit);
 }
 
+static int ntfsck_set_lcnbmp_range(s64 pos, s64 length, u8 bit)
+{
+	if (fsck_lcn_bitmap_size < ((pos + length + 1) >> 3)) {
+		int off = fsck_lcn_bitmap_size;
+
+		fsck_lcn_bitmap_size += ((pos + length + 1 +
+					(NTFS_BLOCK_SIZE - 1)) &
+				~(NTFS_BLOCK_SIZE - 1)) >> 3;
+		fsck_lcn_bitmap = ntfs_realloc(fsck_lcn_bitmap,
+				fsck_lcn_bitmap_size);
+		if (!fsck_lcn_bitmap) {
+			ntfs_log_perror("Can't extend lcn bitmap memory\n");
+			return -ENOMEM;
+		}
+
+		memset(fsck_lcn_bitmap + off, 0, fsck_lcn_bitmap_size - off);
+	}
+
+	ntfsck_set_bitmap_range(fsck_lcn_bitmap, pos, length, bit);
+	return 0;
+}
+
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
 	ntfs_attr_search_ctx *actx;
@@ -359,24 +384,9 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		while (rl[i].length) {
 			if (rl[i].lcn > (LCN)LCN_HOLE) {
-				if (fsck_lcn_bitmap_size <
-				    (rl[i].lcn + 1 + rl[i].length) >> 3) {
-					int off = fsck_lcn_bitmap_size;
-
-					fsck_lcn_bitmap_size +=
-						((rl[i].lcn + 1 + rl[i].length +
-						  (NTFS_BLOCK_SIZE - 1)) &
-						 ~(NTFS_BLOCK_SIZE - 1)) >> 3;
-					fsck_lcn_bitmap = ntfs_realloc(fsck_lcn_bitmap,
-							fsck_lcn_bitmap_size);
-					memset(fsck_lcn_bitmap + off, 0,
-							fsck_lcn_bitmap_size - off);
-				}
+				ntfsck_set_lcnbmp_range(rl[i].lcn, rl[i].length, 1);
 				ntfs_log_verbose("Cluster run of mft entry(%ld) : lcn : %ld, length : %ld\n",
 						ni->mft_no, rl[i].lcn, rl[i].length);
-
-				ntfsck_set_bitmap_range(fsck_lcn_bitmap,
-						rl[i].lcn, rl[i].length, 1);
 			}
 			++i;
 		}
@@ -423,8 +433,7 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 
-			ntfsck_set_bitmap_range(fsck_lcn_bitmap, rl[i].lcn,
-					rl[i].length, set_bit);
+			ntfsck_set_lcnbmp_range(rl[i].lcn, rl[i].length, set_bit);
 
 			if (set_bit == 0)
 				ntfs_cluster_free_basic(vol, rl[i].lcn, rl[i].length);
@@ -933,7 +942,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	fn = ntfsck_find_file_name_attr(ni, ie_fn, actx);
 	if (!fn) {
 		/* NOT FOUND MFT/$FN */
-		check_failed("Filename(%s) in INDEX ENTRY is not found in inode(%llu)",
+		ntfs_log_error("Filename(%s) in INDEX ENTRY is not found in inode(%llu)\n",
 				filename, (unsigned long long)ni->mft_no);
 		ret = -1;
 		goto out;
@@ -952,7 +961,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	if (ie_fn->parent_directory != fn->parent_directory) {
 		if (mft_pdir != ictx->ni->mft_no) {
 			/* parent MFT entry is not matched! Remove this IDX/$FN */
-			check_failed("Parent MFT(%llu) entry is not matched "
+			ntfs_log_error("Parent MFT(%llu) entry is not matched "
 					"MFT/$FN's parent MFT(%llu:%s)",
 					(unsigned long long)ictx->ni->mft_no,
 					(unsigned long long)MREF(ie_fn->parent_directory),
@@ -962,7 +971,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		}
 
 		if (idx_pdir != mft_pdir || idx_pdir_seq != mft_pdir_seq) {
-			check_failed("Parent MFT reference is differnt "
+			ntfs_log_error("Parent MFT reference is differnt "
 					"(IDX/$FN:%u-%llu MFT/$FN:%u-%llu) "
 					"on inode(%llu, %s)",
 					idx_pdir_seq, (unsigned long long)idx_pdir,
@@ -982,7 +991,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 		if (ntfs_attr_lookup(AT_REPARSE_POINT, AT_UNNAMED, 0,
 					CASE_SENSITIVE, 0, NULL, 0, _ctx)) {
-			check_failed("MFT flag set as reparse file, but there's no "
+			ntfs_log_error("MFT flag set as reparse file, but there's no "
 					"MFT/$REPARSE_POINT attribute on inode(%llu:%s)",
 					(unsigned long long)ni->mft_no, filename);
 			ntfs_attr_put_search_ctx(_ctx);
@@ -1028,8 +1037,10 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 				ntfs_index_entry_mark_dirty(ictx);
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
+				fsck_err_fixed();
 			}
 		}
+
 		if (ie_fn->allocated_size != 0 || ie_fn->data_size != 0 ||
 				ni->allocated_size != 0 || ni->data_size != 0) {
 			check_failed("Directory(%llu:%s) has non-zero "
@@ -2210,6 +2221,9 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 		return -1;
 
 	mref = le64_to_cpu(ie->indexed_file);
+	if (MREF(mref) == FILE_root)
+		return 0;
+
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 	ntfs_log_verbose("%ld, %s\n", MREF(mref), filename);
 	ni = ntfs_inode_open(vol, MREF(mref));
@@ -2288,6 +2302,7 @@ remove_index:
 	}
 
 err_out:
+	free(filename);
 	return ret;
 }
 
@@ -2315,6 +2330,11 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		return 1;
 	}
 
+	if (ntfsck_check_directory(ni)) {
+		ntfs_log_error("Root directory has corrupted.\n");
+		exit(-1);
+	}
+
 	dir->ni = ni;
 	ntfs_list_add(&dir->list, &ntfs_dirs_list);
 
@@ -2322,17 +2342,18 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		dir = ntfs_list_entry(ntfs_dirs_list.next, struct dir, list);
 
 		ctx = ntfs_attr_get_search_ctx(dir->ni, NULL);
-		if (!ctx)
-			goto err_out;
+		if (!ctx) {
+			goto next_dir;
+		}
 
 		/* Find the index root attribute in the mft record. */
 		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
 					0, ctx)) {
 			ntfs_log_perror("Index root attribute missing in directory inode "
 					"%lld", (unsigned long long)dir->ni->mft_no);
-			ntfs_attr_put_search_ctx(ctx);
 			/* continue ?? */
-			goto err_out;
+			ntfs_attr_put_search_ctx(ctx);
+			goto next_dir;
 		}
 
 		/* Get to the index root value. */
@@ -2344,7 +2365,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		ictx = ntfs_index_ctx_get(dir->ni, NTFS_INDEX_I30, 4);
 		if (!ictx) {
 			ntfs_attr_put_search_ctx(ctx);
-			goto err_out;
+			goto next_dir;
 		}
 
 		ictx->ir = ir;
@@ -2357,7 +2378,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		if (ictx->block_size < NTFS_BLOCK_SIZE) {
 			ntfs_log_perror("Index block size (%d) is smaller than the "
 					"sector size (%d)", ictx->block_size, NTFS_BLOCK_SIZE);
-			goto err_out;
+			goto next_dir;
 		}
 
 		if (vol->cluster_size <= ictx->block_size)
@@ -2375,8 +2396,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			if (!ictx->ia_na) {
 				ntfs_log_perror("Failed to open index allocation of inode "
 						"%llu", (unsigned long long)dir->ni->mft_no);
-				ntfs_attr_put_search_ctx(ctx);
-				goto err_out;
+				goto next_dir;
 			}
 		}
 
@@ -2385,7 +2405,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
 				fsck_err_failed();
-				goto err_out;
+				goto next_dir;
 			}
 		}
 
@@ -2411,8 +2431,11 @@ add_dir_list:
 		}
 
 next_dir:
-		ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
-		ntfs_index_ctx_put(ictx);
+		if (ictx) {
+			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
+			ntfs_index_ctx_put(ictx);
+			ictx = NULL;
+		}
 		ntfs_inode_close(dir->ni);
 		ntfs_list_del(&dir->list);
 		free(dir);
@@ -2539,13 +2562,16 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	 * Here just account number of clusters that is used by system MFT
 	 * entries.
 	 */
-	for (mft_num = 0; mft_num < FILE_first_user; mft_num++) {
+	for (mft_num = FILE_MFT; mft_num < FILE_first_user; mft_num++) {
 
 		ni = ntfs_inode_open(vol, mft_num);
-		if (ni)
+		if (ni) {
 			ntfsck_update_lcn_bitmap(ni);
 
-		/* TODO: repair system MFT entries? */
+			/* TODO: repair system MFT entries? */
+
+			ntfs_inode_close(ni);
+		}
 	}
 
 	/*

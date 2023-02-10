@@ -142,9 +142,19 @@ ntfs_index_context *ntfs_index_ctx_get(ntfs_inode *ni,
 static void ntfs_index_ctx_free(ntfs_index_context *icx)
 {
 	ntfs_log_trace("Entering\n");
-	
-	if (!icx->bad_index && !icx->entry)
+
+	if (!icx->bad_index && !icx->entry) {
+		if (icx->actx)
+			ntfs_attr_put_search_ctx(icx->actx);
+
+		if (icx->ib)
+			free(icx->ib);
+
+		if (icx->ia_na)
+			ntfs_attr_close(icx->ia_na);
+
 		return;
+	}
 
 	if (icx->actx)
 		ntfs_attr_put_search_ctx(icx->actx);
@@ -156,7 +166,7 @@ static void ntfs_index_ctx_free(ntfs_index_context *icx)
 		}
 		free(icx->ib);
 	}
-	
+
 	ntfs_attr_close(icx->ia_na);
 }
 
@@ -958,6 +968,9 @@ int ntfs_index_lookup(const void *key, const int key_len, ntfs_index_context *ic
 	
 	/* Child node present, descend into it. */
 	
+	if (icx->ia_na)
+		ntfs_attr_close(icx->ia_na);
+
 	icx->ia_na = ntfs_ia_open(icx, ni);
 	if (!icx->ia_na)
 		goto err_out;
