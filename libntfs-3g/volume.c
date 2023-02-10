@@ -270,7 +270,7 @@ static int ntfs_mft_load(ntfs_volume *vol)
 		ntfs_log_perror("Error allocating memory for $MFT");
 		goto error_exit;
 	}
-	vol->mft_ni->mft_no = 0;
+	vol->mft_ni->mft_no = FILE_MFT;
 	vol->mft_ni->mrec = mb;
 	/* Can't use any of the higher level functions yet! */
 	l = ntfs_mst_pread(vol->dev, vol->mft_lcn << vol->cluster_size_bits, 1,
@@ -574,6 +574,7 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 
 	if (ntfs_pread(dev, 0, sector_size, ntfs_boot) != sector_size) {
 		ntfs_log_error("Failed to read boot sector.\n");
+		ntfs_free(ntfs_boot);
 		return 1;
 	}
 
@@ -581,6 +582,7 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 	    ((ntfs_boot->jump[1] != 0x52) && (ntfs_boot->jump[1] != 0x5b)) ||
 	    (ntfs_boot->jump[2] != 0x90)) {
 		ntfs_log_error("Boot sector: Bad jump.\n");
+		ntfs_free(ntfs_boot);
 		return 1;
 	}
 
@@ -614,10 +616,12 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 				res = 0;
 			if (res) {
 				ntfs_log_error("Boot sector: failed to fix boot sector\n");
+				ntfs_free(ntfs_boot);
 				return res;
 			} else
 				fsck_err_fixed();
 		} else if (res) {
+			ntfs_free(ntfs_boot);
 			return 1;
 		}
 	}
@@ -625,6 +629,7 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 	ntfs_log_verbose("Boot sector verification complete. Proceeding to $MFT");
 
 	// todo: if partition, query bios and match heads/tracks?
+	ntfs_free(ntfs_boot);
 	return 0;
 }
 
