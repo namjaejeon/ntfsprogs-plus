@@ -2303,10 +2303,28 @@ static void ntfsck_umount(ntfs_volume *vol)
 
 static int ntfsck_check_system_files(ntfs_volume *vol)
 {
-	ntfs_inode *ni;
+	ntfs_inode *sys_ni, *root_ni;
+	ntfs_attr_search_ctx *root_ctx, *sys_ctx;
+	ntfs_index_context *ictx;
+	FILE_NAME_ATTR *fn;
 	s64 mft_num;
+	int err;
 
 	ntfs_log_info("Parse #%d: Check system files...\n", parse_count++);
+
+	root_ni = ntfs_inode_open(vol, FILE_root);
+	if (!root_ni) {
+		ntfs_log_error("Couldn't open the root directory.\n");
+		return 1;
+	}
+
+	root_ctx = ntfs_attr_get_search_ctx(root_ni, NULL);
+	if (!root_ctx)
+		goto close_inode;
+
+	ictx = ntfs_index_ctx_get(root_ni, NTFS_INDEX_I30, 4);
+	if (!ictx)
+		goto put_attr_ctx;
 
 	/*
 	 * System MFT entries should be verified checked by ntfs_device_mount().
@@ -2314,19 +2332,63 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	 * entries.
 	 */
 	for (mft_num = 0; mft_num < FILE_first_user; mft_num++) {
+		sys_ni = ntfs_inode_open(vol, mft_num);
+		if (!sys_ni) {
+			ntfs_log_error("Failed to open %ld system file\n",
+					mft_num);
+			goto put_index_ctx;
+		}
 
-		ni = ntfs_inode_open(vol, mft_num);
-		if (ni)
-			ntfsck_update_lcn_bitmap(ni);
+		if (sys_ni->vol->major_ver < 3 && mft_num > 10)
+			continue;
+		else if (mft_num > FILE_Extend)
+			continue;
 
-		/* TODO: repair system MFT entries? */
+		sys_ctx = ntfs_attr_get_search_ctx(sys_ni, NULL);
+		if (!sys_ctx) {
+			ntfs_inode_close(sys_ni);
+			goto put_index_ctx;
+		}
+
+		err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+				CASE_SENSITIVE, 0, NULL, 0, sys_ctx);
+		if (err) {
+			ntfs_log_error("Failed to lookup file name attribute of %ld system file\n",
+					mft_num);
+			ntfs_attr_put_search_ctx(sys_ctx);
+			ntfs_inode_close(sys_ni);
+			goto put_index_ctx;
+		}
+
+		fn = (FILE_NAME_ATTR *)((u8 *)sys_ctx->attr +
+				le16_to_cpu(sys_ctx->attr->value_offset));
+
+		/*
+		 * Index entries of system files must exist. Check whether
+		 * the index entries for system files is in the $INDEX_ROOT
+		 * of the $Root mft entry using ntfs_index_lookup().
+		 */
+		if (ntfs_index_lookup(fn, le32_to_cpu(sys_ctx->attr->value_length),
+					ictx)) {
+			ntfs_log_error("Failed to find index entry of %ld system file\n",
+					mft_num);
+			ntfs_attr_put_search_ctx(sys_ctx);
+			ntfs_inode_close(sys_ni);
+			goto put_index_ctx;
+		}
+
+		ntfsck_update_lcn_bitmap(sys_ni);
+
+		ntfs_attr_put_search_ctx(sys_ctx);
+		ntfs_inode_close(sys_ni);
 	}
 
-	/*
-	 * TODO: should check sub system MFT entries.
-	 * system MFT entry like $Extends have sub system MFT entries,
-	 * but did not check here
-	 */
+put_index_ctx:
+	ntfs_index_ctx_put(ictx);
+put_attr_ctx:
+	ntfs_attr_put_search_ctx(root_ctx);
+close_inode:
+	ntfs_inode_close(root_ni);
 
 	return 0;
 }
