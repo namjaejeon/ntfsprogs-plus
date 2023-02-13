@@ -203,7 +203,7 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 
 char ntfsck_mft_bmp_bit_get(const u64 bit)
 {
-	if (bit >> 3 > fsck_mft_bmp_size)
+	if (bit >> 3 >= fsck_mft_bmp_size)
 		return 0;
 	return ntfs_bit_get(fsck_mft_bmp, bit);
 }
