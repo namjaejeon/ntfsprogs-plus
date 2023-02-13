@@ -710,6 +710,8 @@ delete_inodes:
 				err = -EIO;
 			} else {
 				ntfs_bit_set(fsck_mft_bmp, ni->mft_no, 1);
+
+				ntfsck_update_lcn_bitmap(ni);
 				/*
 				 * Recall ntfsck_update_lcn_bitmap() about parent_ni.
 				 * Because cluster can be allocated by adding index entry.
@@ -717,16 +719,17 @@ delete_inodes:
 				ntfsck_update_lcn_bitmap(parent_ni);
 			}
 
-			ntfs_inode_close(parent_ni);
 		} /* if (parent_ni) */
 
 next_item:
 		if (ctx)
 			ntfs_attr_put_search_ctx(ctx);
-		if (ni)
-			ntfs_inode_close(ni);
+
 		if (parent_ni)
 			ntfs_inode_close(parent_ni);
+
+		if (ni)
+			ntfs_inode_close(ni);
 
 		ntfs_list_del(&of->list);
 		free(of);
@@ -740,6 +743,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	int is_used;
 	int always_exist_sys_meta_num = vol->major_ver >= 3 ? 11 : 10;
 	ntfs_inode *ni;
+	s64 mft_no = -1;
 
 	is_used = utils_mftrec_in_use(vol, mft_num);
 	if (is_used < 0) {
@@ -784,12 +788,16 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		return;
 	}
 
+	mft_no = ni->mft_no;
 	if (!is_used) {
 		check_failed("Found an orphaned file(mft no: %ld). Try to add index entry",
 				mft_num);
 		if (ntfsck_ask_repair(vol)) {
+			/* close inode to avoid nested call of ntfs_inode_open() */
+			ntfs_inode_close(ni);
+
 			/* TODO: Move orphan mft entry to lost+found directory */
-			if (ntfsck_add_index_entry_orphaned_file(vol, ni->mft_no)) {
+			if (ntfsck_add_index_entry_orphaned_file(vol, mft_no)) {
 				/*
 				 * error returned.
 				 * inode is already freed and closed in that function,
@@ -797,17 +805,17 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 				 */
 				return;
 			}
-
 			fsck_err_fixed();
+		} else {
+			/*
+			 * Update number of clusters that is used for each
+			 * non-resident mft entries to bitmap.
+			 */
+			ntfsck_update_lcn_bitmap(ni);
+			ntfs_inode_close(ni);
 		}
-	}
-
-	/*
-	 * Update number of clusters that is used for each non-resident mft entries to
-	 * bitmap.
-	 */
-	ntfsck_update_lcn_bitmap(ni);
-	ntfs_inode_close(ni);
+	} else
+		ntfs_inode_close(ni);
 }
 
 #if DEBUG
