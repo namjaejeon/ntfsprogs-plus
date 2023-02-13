@@ -1819,9 +1819,9 @@ static int ntfs_ih_takeout(ntfs_index_context *icx, INDEX_HEADER *ih,
 	BOOL full;
 	int ret = STATUS_ERROR;
 	ntfs_index_context *icx_add_ie;
-	
+
 	ntfs_log_trace("Entering\n");
-	
+
 	full = ih->index_length == ih->allocated_size;
 	ie_roam = ntfs_ie_dup_novcn(ie);
 	if (!ie_roam)
@@ -1844,11 +1844,16 @@ static int ntfs_ih_takeout(ntfs_index_context *icx, INDEX_HEADER *ih,
 	} else
 		if (ntfs_ib_write(icx, ib))
 			goto out;
-	
+
 	ie_dup = ntfs_ie_dup(icx->entry);
+	if (!ie_dup) {
+		ret = STATUS_ERROR;
+		goto out;
+	}
+
 	ntfs_index_ctx_reinit(icx);
 	icx_add_ie = ntfs_index_ctx_get(icx->ni, NTFS_INDEX_I30, 4);
-	if (!icx)
+	if (!icx_add_ie)
 		goto out;
 
 	ret = ntfs_ie_add(icx_add_ie, ie_roam);
@@ -1859,6 +1864,8 @@ static int ntfs_ih_takeout(ntfs_index_context *icx, INDEX_HEADER *ih,
 	ntfs_index_lookup(&ie_dup->key, le16_to_cpu(ie_dup->key_length), icx);
 out:
 	free(ie_roam);
+	if (ie_dup)
+		free(ie_dup);
 	return ret;
 }
 
