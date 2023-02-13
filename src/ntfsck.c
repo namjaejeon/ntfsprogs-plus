@@ -2469,6 +2469,8 @@ int main(int argc, char **argv)
 				path);
 
 	vol = ntfsck_mount(path, option.flags);
+	if (!vol)
+		goto err_out;
 
 	ntfsck_check_system_files(vol);
 
@@ -2487,6 +2489,7 @@ int main(int argc, char **argv)
 
 	ntfsck_check_orphaned_clusters(vol);
 
+err_out:
 	errors = fsck_errors - fsck_fixes;
 	if (errors)
 		ntfs_log_info("%d errors found, %d fixed\n",
@@ -2495,11 +2498,11 @@ int main(int argc, char **argv)
 		ntfs_log_info("Clean, No errors found or left (errors:%d, fixed:%d)\n",
 				fsck_errors, fsck_fixes);
 
-	if (!errors)
+	if (!errors && vol)
 		ntfsck_reset_dirty(vol);
 
-err_out:
-	ntfsck_umount(vol);
+	if (vol)
+		ntfsck_umount(vol);
 
 	if (errors)
 		return 1;
