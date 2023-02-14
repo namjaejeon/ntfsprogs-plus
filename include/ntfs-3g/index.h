@@ -61,7 +61,7 @@
 
 #define  VCN_INDEX_ROOT_PARENT  ((VCN)-2)
 
-#define  MAX_PARENT_VCN		32
+#define  MAX_PARENT_VCN		64
 
 typedef int (*COLLATE)(ntfs_volume *vol, const void *data1, int len1,
 					 const void *data2, int len2);
