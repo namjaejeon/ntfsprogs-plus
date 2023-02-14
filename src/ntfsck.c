@@ -209,7 +209,7 @@ char ntfsck_mft_bmp_bit_get(const u64 bit)
 
 int ntfsck_mft_bmp_bit_set(u64 mft_no)
 {
-	if (mft_no >> 3 > fsck_mft_bmp_size) {
+	if (mft_no >> 3 >= fsck_mft_bmp_size) {
 		s64 off = fsck_mft_bmp_size;
 
 		fsck_mft_bmp_size =
