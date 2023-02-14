@@ -2262,16 +2262,6 @@ static ntfs_volume *ntfsck_mount(const char *path __attribute__((unused)),
 	if (!vol)
 		return NULL;
 
-	if (flags & NTFS_MNT_FSCK)
-		NVolSetFsck(vol);
-
-	if (flags & NTFS_MNT_FS_YES_REPAIR)
-		NVolSetFsYesRepair(vol);
-	else if (flags & NTFS_MNT_FS_ASK_REPAIR)
-		NVolSetFsAskRepair(vol);
-	else if (flags & NTFS_MNT_FS_AUTO_REPAIR)
-		NVolSetFsAutoRepair(vol);
-
 	fsck_lcn_bitmap_size = NTFS_BLOCK_SIZE;
 	fsck_lcn_bitmap = ntfs_calloc(NTFS_BLOCK_SIZE);
 	if (!fsck_lcn_bitmap) {
@@ -2338,6 +2328,8 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 					mft_num);
 			goto put_index_ctx;
 		}
+		
+		ntfsck_update_lcn_bitmap(sys_ni);
 
 		if (sys_ni->vol->major_ver < 3 && mft_num > 10)
 			continue;
@@ -2376,8 +2368,6 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			ntfs_inode_close(sys_ni);
 			goto put_index_ctx;
 		}
-
-		ntfsck_update_lcn_bitmap(sys_ni);
 
 		ntfs_attr_put_search_ctx(sys_ctx);
 		ntfs_inode_close(sys_ni);

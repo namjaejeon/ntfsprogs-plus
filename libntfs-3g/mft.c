@@ -294,7 +294,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	}
 
 	/* check used size overflow */
-	if (!NVolNoFixupWarn(vol) && (biu > vol->mft_record_size)) {
+	if ((!NVolNoFixupWarn(vol) || NVolFsNoRepair(vol)) && (biu > vol->mft_record_size)) {
 		ntfs_log_error("Record %llu has corrupt in-use size "
 			       "(%u > %u)\n", (unsigned long long)MREF(mref),
 			       (int)biu, (int)vol->mft_record_size);
