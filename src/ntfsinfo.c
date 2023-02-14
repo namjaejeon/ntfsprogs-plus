@@ -1338,13 +1338,15 @@ static const char * ntfs_dump_lcn(LCN lcn)
 static void ntfs_dump_attribute_header(ntfs_attr_search_ctx *ctx,
 		ntfs_volume *vol, struct RUNCOUNT *runcount)
 {
+	MFT_RECORD *m = ctx->mrec;
 	ATTR_RECORD *a = ctx->attr;
 
-	printf("Dumping attribute %s (0x%x) from mft record %lld (0x%llx)\n",
+	printf("Dumping attribute %s (0x%x) from mft record %lld (0x%llx) at %#x\n",
 			get_attribute_type_name(a->type),
 			(unsigned)le32_to_cpu(a->type),
 			(unsigned long long)ctx->ntfs_ino->mft_no,
-			(unsigned long long)ctx->ntfs_ino->mft_no);
+			(unsigned long long)ctx->ntfs_ino->mft_no,
+			(unsigned int)((char *)a - (char *)m));
 
 	ntfs_log_verbose("\tAttribute length:\t %u (0x%x)\n",
 			(unsigned)le32_to_cpu(a->length),
