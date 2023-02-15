@@ -267,7 +267,7 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 	BOOL backup_boot_check = FALSE, repair = FALSE;
 	u8 bm[NTFS_BUF_SIZE];
 
-	ntfs_log_info("Parse #%d: Check cluster bitmap...\n", parse_count++);
+	fsck_start_step("Check cluster bitmap...\n");
 
 	while (1) {
 		wpos = pos;
@@ -333,6 +333,9 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 			repair = FALSE;
 		}
 	}
+
+	fsck_end_step();
+
 }
 
 static void ntfsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
@@ -2486,16 +2489,21 @@ err_continue:
 
 static int ntfsck_scan_index_entries(ntfs_volume *vol)
 {
-	ntfs_log_info("Parse #%d: Check index entries in volume...\n", parse_count++);
+	int ret;
 
-	return ntfsck_scan_index_entries_btree(vol);
+	fsck_start_step("Check index entries in volume...\n");
+
+	ret = ntfsck_scan_index_entries_btree(vol);
+
+	fsck_end_step();
+	return ret;
 }
 
 static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
 
-	ntfs_log_info("Parse #%d: Check mft entries in volume...\n", parse_count++);
+	fsck_start_step("Check mft entries in volume...\n");
 
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
@@ -2505,6 +2513,8 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++) {
 		ntfsck_verify_mft_record(vol, mft_num);
 	}
+
+	fsck_end_step();
 }
 
 static int ntfsck_reset_dirty(ntfs_volume *vol)
@@ -2527,7 +2537,7 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 
 static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 {
-	ntfs_log_info("Parse #%d: Replay logfile...\n", parse_count++);
+	fsck_start_step("Replay logfile...\n");
 
 	/*
 	 * For now, Just reset logfile.
@@ -2537,6 +2547,7 @@ static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 		return -1;
 	}
 
+	fsck_end_step();
 	return 0;
 }
 
@@ -2628,7 +2639,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	s64 mft_num;
 	int err;
 
-	ntfs_log_info("Parse #%d: Check system files...\n", parse_count++);
+	fsck_start_step("Check system files...\n");
 
 	root_ni = ntfs_inode_open(vol, FILE_root);
 	if (!root_ni) {
@@ -2719,6 +2730,8 @@ put_attr_ctx:
 	ntfs_attr_put_search_ctx(root_ctx);
 close_inode:
 	ntfs_inode_close(root_ni);
+
+	fsck_end_step();
 
 	return 0;
 }

@@ -125,6 +125,7 @@ static const char *access_denied_msg =
 
 int fsck_errors;
 int fsck_fixes;
+int parse_errors;
 
 /**
  * ntfs_volume_alloc - Create an NTFS volume object and initialise it
