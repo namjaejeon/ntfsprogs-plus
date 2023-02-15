@@ -2278,8 +2278,6 @@ next_dir:
 	}
 
 	return 0;
-err_out:
-	return -1;
 }
 
 static int ntfsck_scan_index_entries(ntfs_volume *vol)
