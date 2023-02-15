@@ -164,6 +164,7 @@ static void ntfs_index_ctx_free(ntfs_index_context *icx)
 			/* FIXME: Error handling!!! */
 			ntfs_ib_write(icx, icx->ib);
 		}
+
 		free(icx->ib);
 	}
 
@@ -324,12 +325,12 @@ static int ntfs_ih_numof_entries(INDEX_HEADER *ih)
 	return n;
 }
 
-static int ntfs_ih_one_entry(INDEX_HEADER *ih)
+int ntfs_ih_one_entry(INDEX_HEADER *ih)
 {
 	return (ntfs_ih_numof_entries(ih) == 1);
 }
 
-static int ntfs_ih_zero_entry(INDEX_HEADER *ih)
+int ntfs_ih_zero_entry(INDEX_HEADER *ih)
 {
 	return (ntfs_ih_numof_entries(ih) == 0);
 }
@@ -379,7 +380,7 @@ static INDEX_ENTRY *ntfs_ie_dup(INDEX_ENTRY *ie)
 	return dup;
 }
 
-static INDEX_ENTRY *ntfs_ie_dup_novcn(INDEX_ENTRY *ie)
+INDEX_ENTRY *ntfs_ie_dup_novcn(INDEX_ENTRY *ie)
 {
 	INDEX_ENTRY *dup;
 	int size = le16_to_cpu(ie->length);
@@ -2212,9 +2213,23 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 			ntfs_index_context *ictx)
 {
 	INDEX_ENTRY *entry;
+	INDEX_BLOCK *ib = NULL;
+	BOOL backup;
 	s64 vcn;
 
 	entry = ie;
+
+	if (NVolIsOnFsck(ictx->ni->vol)) {
+		backup = ictx->is_in_root;
+		if (!ictx->is_in_root) {
+			ictx->prev_ib = ictx->ib;
+			ib = ntfs_malloc(ictx->block_size);
+			if (!ib)
+				return NULL;
+			ictx->ib = ib;
+		}
+	}
+
 	do {
 		vcn = ntfs_ie_get_vcn(entry);
 		if (ictx->is_in_root) {
@@ -2227,12 +2242,11 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 		} else {
 
 			/* down from non-zero level */
-			
+
 			ictx->pindex++;
 		}
-		ictx->parent_pos[ictx->pindex] = 0;
-		ictx->parent_vcn[ictx->pindex] = vcn;
-		if (!ntfs_ib_read(ictx,vcn,ictx->ib)) {
+
+		if (!ntfs_ib_read(ictx, vcn, ictx->ib)) {
 			int ret;
 
 			ictx->entry = ntfs_ie_get_first(&ictx->ib->index);
@@ -2246,9 +2260,33 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 					entry = NULL;
 				}
 			}
+			/* TODO: ret < 0, inconsistent entry remove */
+
+			ictx->parent_pos[ictx->pindex] = 0;
+			ictx->parent_vcn[ictx->pindex] = vcn;
 		} else
-			entry = (INDEX_ENTRY*)NULL;
+			entry = NULL;
+
 	} while (entry && (entry->ie_flags & INDEX_ENTRY_NODE));
+
+	if (NVolIsOnFsck(ictx->ni->vol)) {
+		if (entry) {
+			if (ictx->prev_ib) {
+				free(ictx->prev_ib);
+				ictx->prev_ib = NULL;
+			}
+		} else {
+			/*
+			 * In case of failure calling ntfs_ib_read(),
+			 * fsck should remove INDEX_ENTRY_NODE of previous entry.
+			 * So, need to preserve prev_ib to point previous entry.
+			 */
+			ictx->is_in_root = backup;
+			ictx->bad_index = TRUE;
+			ictx->pindex--;
+		}
+	}
+
 	return (entry);
 }
 
@@ -2396,5 +2434,3 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 	}
 	return (next);
 }
-
-
