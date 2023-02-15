@@ -213,8 +213,8 @@ int ntfsck_mft_bmp_bit_set(u64 mft_no)
 		s64 off = fsck_mft_bmp_size;
 
 		fsck_mft_bmp_size =
-			(((mft_no >> 3) + 1 + (NTFS_BLOCK_SIZE - 1)) &
-			~(NTFS_BLOCK_SIZE - 1));
+			((mft_no >> 3) + 1 + (NTFS_BLOCK_SIZE - 1)) &
+			~(NTFS_BLOCK_SIZE - 1);
 
 		fsck_mft_bmp = ntfs_realloc(fsck_mft_bmp,
 				fsck_mft_bmp_size);
@@ -358,14 +358,14 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		while (rl[i].length) {
 			if (rl[i].lcn > (LCN)LCN_HOLE) {
-				if (fsck_lcn_bitmap_size <
-				    (rl[i].lcn + 1 + rl[i].length) >> 3) {
+				if (fsck_lcn_bitmap_size <=
+				    (rl[i].lcn + rl[i].length) >> 3) {
 					int off = fsck_lcn_bitmap_size;
 
-					fsck_lcn_bitmap_size +=
-						((rl[i].lcn + 1 + rl[i].length +
+					fsck_lcn_bitmap_size =
+						(((rl[i].lcn + rl[i].length) >> 3) + 1 +
 						  (NTFS_BLOCK_SIZE - 1)) &
-						 ~(NTFS_BLOCK_SIZE - 1)) >> 3;
+						 ~(NTFS_BLOCK_SIZE - 1);
 					fsck_lcn_bitmap = ntfs_realloc(fsck_lcn_bitmap,
 							fsck_lcn_bitmap_size);
 					memset(fsck_lcn_bitmap + off, 0,
