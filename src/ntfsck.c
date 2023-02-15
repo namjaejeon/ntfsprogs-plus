@@ -862,8 +862,10 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			ntfsck_update_lcn_bitmap(ni);
 			ntfs_inode_close(ni);
 		}
-	} else
+	} else {
+		ntfsck_update_lcn_bitmap(ni);
 		ntfs_inode_close(ni);
+	}
 }
 
 #if DEBUG
