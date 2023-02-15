@@ -525,6 +525,57 @@ static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 				(unsigned long long)ni->mft_no);
 }
 
+static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
+		FILE_NAME_ATTR *fn)
+{
+	ntfs_index_context *ictx;
+	ntfs_volume *vol;
+
+	if (!parent_ni || !ni || !fn)
+		return STATUS_ERROR;
+
+	vol = ni->vol;
+
+	ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
+	if (!ictx) {
+		ntfs_log_perror("Failed to get index ctx, inode(%llu) "
+				"for repairing orphan inode",
+				(unsigned long long)parent_ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	if (!ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR), ictx)) {
+
+		/* Find index */
+		if (ntfsck_check_inode(ni, ictx->entry, ictx)) {
+			/* Inode check failed, remove index and inode */
+			ntfs_log_info("Failed to check inode(%lld) "
+					"for repairing orphan inode\n",
+					(unsigned long long)ni->mft_no);
+
+			if (ntfs_index_rm(ictx)) {
+				ntfs_log_error("Failed to remove index entry of inode(%llu)\n",
+						(unsigned long long)ni->mft_no);
+				ntfs_index_ctx_put(ictx);
+				return STATUS_ERROR;
+			}
+			ntfs_inode_mark_dirty(ictx->ni);
+			ntfsck_check_non_resident_cluster(ni, 0);
+			ntfsck_free_mft_records(vol, ni);
+
+			ntfs_index_ctx_put(ictx);
+			return STATUS_ERROR;
+		}
+
+	} else {
+		ntfs_index_ctx_put(ictx);
+		return STATUS_NOT_FOUND;
+	}
+
+	ntfs_index_ctx_put(ictx);
+	return STATUS_OK;
+}
+
 static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, s64 mft_no)
 {
 	ntfs_attr_search_ctx *ctx;
@@ -650,7 +701,7 @@ delete_inodes:
 			parent_ni = ntfs_inode_open(vol, MREF(parent_no));
 
 		if (parent_ni) {
-			ntfs_index_context *ictx;
+			int ret = -1;
 
 			/* Check parent inode */
 			if (ntfsck_check_directory(parent_ni)) {
@@ -660,44 +711,22 @@ delete_inodes:
 				goto next_item;
 			}
 
-			ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
-			if (!ictx) {
-				ntfs_log_perror("Failed to get index ctx, inode(%llu) "
-						"for repairing orphan inode",
-						(unsigned long long)parent_ni->mft_no);
-				goto next_item;
-			}
-
-			if (!ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR), ictx)) {
-				int ret = 0;
-
-				/* Find index */
-				if (ntfsck_check_inode(ni, ictx->entry, ictx)) {
-					/* Inode check failed, remove index and inode */
-					ntfs_log_info("Failed to check inode(%lld) "
-							"for repairing orphan inode\n",
-							(unsigned long long)ni->mft_no);
-					ret = ntfs_index_rm(ictx);
-					if (ret)
-						ntfs_log_error("Failed to remove index entry of inode(%llu)\n",
-								(unsigned long long)ni->mft_no);
-
-					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
-					ntfsck_check_non_resident_cluster(ni, 0);
-					ntfsck_free_mft_records(vol, ni);
-				}
-
-				ntfs_index_ctx_put(ictx);
-				goto next_item;
-			}
-			ntfs_index_ctx_put(ictx);
-
 			/* Add index for orphaned inode */
 			if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 				fn->allocated_size = 0;
 				fn->data_size = 0;
 				ntfs_inode_mark_dirty(ni);
 			}
+
+			ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
+			if (ret == STATUS_OK)
+				goto next_item;
+			else if (ret == STATUS_ERROR) {
+				err = -EIO;
+				goto next_item;
+			}
+
+			/* Not found index for $FN */
 
 			err = ntfs_index_add_filename(parent_ni, fn,
 					MK_MREF(ni->mft_no,
@@ -708,16 +737,27 @@ delete_inodes:
 						(unsigned long long)ni->mft_no,
 						(unsigned long long)parent_ni->mft_no, err);
 				err = -EIO;
-			} else {
-				ntfs_bit_set(fsck_mft_bmp, ni->mft_no, 1);
-
-				ntfsck_update_lcn_bitmap(ni);
-				/*
-				 * Recall ntfsck_update_lcn_bitmap() about parent_ni.
-				 * Because cluster can be allocated by adding index entry.
-				 */
-				ntfsck_update_lcn_bitmap(parent_ni);
+				goto next_item;
 			}
+
+			/* check again after adding $FN to index */
+			ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
+			if (ret == STATUS_OK)
+				goto next_item;
+			else if (ret == STATUS_ERROR || ret == STATUS_NOT_FOUND) {
+				err = -EIO;
+				goto next_item;
+			}
+
+			ntfs_bit_set(fsck_mft_bmp, ni->mft_no, 1);
+
+			ntfsck_update_lcn_bitmap(ni);
+			/*
+			 * Recall ntfsck_update_lcn_bitmap() about parent_ni.
+			 * Because cluster can be allocated by adding index entry.
+			 */
+			ntfsck_update_lcn_bitmap(parent_ni);
+
 
 		} /* if (parent_ni) */
 
@@ -2181,12 +2221,39 @@ attr_close:
 	return ret;
 }
 
+/* called after ntfs_inode_attatch_all_extents() is called */
+static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni)
+{
+	int ext_idx = 0;
+
+	if (!ni)
+		return STATUS_ERROR;
+
+	if (ntfsck_mft_bmp_bit_set(ni->mft_no)) {
+		ntfs_log_error("Failed to set MFT bitmap for (%llu)\n",
+				(unsigned long long)ni->mft_no);
+		/* do not return error */
+	}
+
+	/* set mft record bitmap */
+	while (ext_idx < ni->nr_extents) {
+		if (ntfsck_mft_bmp_bit_set(ni->extent_nis[ext_idx]->mft_no)) {
+			/* do not return error */
+			break;
+		}
+		ext_idx++;
+	}
+	return STATUS_OK;
+}
+
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx)
 {
 	FILE_NAME_ATTR *ie_fn = (FILE_NAME_ATTR *)&ie->key.file_name;
 	int32_t flags;
 	int ret;
+
+	ntfs_inode_attach_all_extents(ni);
 
 	/* Check file type */
 	flags = ntfsck_check_file_type(ni, ictx, ie_fn);
@@ -2208,6 +2275,7 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	if (ret < 0)
 		goto remove_index;
 
+	ntfsck_set_mft_record_bitmap(ni);
 	return STATUS_OK;
 
 remove_index:
@@ -2236,10 +2304,6 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 	ntfs_log_verbose("%ld, %s\n", MREF(mref), filename);
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
-		int ext_idx = 0;
-
-		ntfs_inode_attach_all_extents(ni);
-
 		/* skip checking for system files */
 		if (!(ni->flags & FILE_ATTR_SYSTEM)) {
 			ret = ntfsck_check_inode(ni, ie, ictx);
@@ -2248,21 +2312,9 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 						(unsigned long long)ni->mft_no);
 				goto remove_index;
 			}
-		}
-
-		if (ntfsck_mft_bmp_bit_set(MREF(mref))) {
-			ntfs_log_error("Failed to set MFT bitmap for (%llu)\n",
-					(unsigned long long)MREF(mref));
-			ret = -1;
-			goto err_out;
-		}
-
-		while (ext_idx < ni->nr_extents) {
-			if (ntfsck_mft_bmp_bit_set(ni->extent_nis[ext_idx]->mft_no)) {
-				ret = -1;
-				goto err_out;
-			}
-			ext_idx++;
+		} else {
+			/* for inode whose parent inode is system files */
+			ntfsck_set_mft_record_bitmap(ni);
 		}
 
 		if ((ie->key.file_name.file_attributes & FILE_ATTR_I30_INDEX_PRESENT) &&
