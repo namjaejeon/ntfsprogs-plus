@@ -54,6 +54,7 @@ typedef struct _ntfs_volume ntfs_volume;
 
 extern int fsck_errors;
 extern int fsck_fixes;
+extern int parse_errors;
 
 /* It is called when found filesystem inconsistency */
 #define check_failed(FORMAT, ARGS...) \
@@ -78,6 +79,21 @@ extern int fsck_fixes;
 #define fsck_err_fixed() \
 	do { \
 		fsck_fixes++; \
+	} while (0)
+
+/* It is called when each fsck step start */
+#define fsck_start_step(FORMAT, ARGS...) \
+	do { \
+		ntfs_log_info("Parse #%d: " FORMAT, parse_count++, ##ARGS); \
+	} while (0)
+
+/* It is called when each fsck step end */
+#define fsck_end_step() \
+	do { \
+		parse_errors = (fsck_errors - fsck_fixes) - parse_errors; \
+		if (parse_errors) \
+			ntfs_log_info("Parse #%d Errors remains: %d\n", \
+					parse_count - 1, parse_errors); \
 	} while (0)
 
 /**
