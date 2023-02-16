@@ -2337,10 +2337,6 @@ err_continue:
 	}
 
 	return 0;
-
-	/* CHECK: goto err_countinue or err_out ? */
-err_out:
-	return -1;
 }
 
 static int ntfsck_scan_index_entries(ntfs_volume *vol)
