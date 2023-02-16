@@ -684,6 +684,18 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 #endif
 	if (flags & NTFS_MNT_RDONLY)
 		NVolSetReadOnly(vol);
+
+	if (flags & NTFS_MNT_FSCK)
+		NVolSetFsck(vol);
+
+	if (flags & NTFS_MNT_FS_YES_REPAIR)
+		NVolSetFsYesRepair(vol);
+	else if (flags & NTFS_MNT_FS_ASK_REPAIR)
+		NVolSetFsAskRepair(vol);
+	else if (flags & NTFS_MNT_FS_AUTO_REPAIR)
+		NVolSetFsAutoRepair(vol);
+	else if (flags & NTFS_MNT_FS_NO_REPAIR)
+		NVolSetFsNoRepair(vol);
 	
 	/* ...->open needs bracketing to compile with glibc 2.7 */
 	if ((dev->d_ops->open)(dev, NVolReadOnly(vol) ? O_RDONLY: O_RDWR)) {
