@@ -2473,7 +2473,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	 * Here just account number of clusters that is used by system MFT
 	 * entries.
 	 */
-	for (mft_num = 0; mft_num < FILE_first_user; mft_num++) {
+	for (mft_num = FILE_MFT; mft_num < FILE_first_user; mft_num++) {
 		sys_ni = ntfs_inode_open(vol, mft_num);
 		if (!sys_ni) {
 			ntfs_log_error("Failed to open %ld system file\n",
