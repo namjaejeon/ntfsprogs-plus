@@ -1121,32 +1121,33 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		goto out;
 	}
 
-	if (!(ni->flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED))) {
-		/* check $FN size fields */
-		if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
-			check_failed("Allocated size is different "
+	/*
+	 * Already applied proepr value to inode field.
+	 * ni->allocated_size : $DATA->allocated_size or $DATA->compressed_size
+	 */
+
+	/* check $FN size fields */
+	if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
+		check_failed("Allocated size is different "
 				"(IDX/$FN:%llu MFT/$DATA:%llu) on inode(%llu, %s)",
 				(unsigned long long)sle64_to_cpu(ie_fn->allocated_size),
 				(unsigned long long)ni->allocated_size,
 				(unsigned long long)ni->mft_no, filename);
-			need_fix = TRUE;
-			goto fix_index;
-		}
-		/*
-		 * Is it need to check MFT/$FN's data size?
-		 * It looks like that Windows does not check MFT/$FN's data size.
-		 */
-		if (ni->data_size != ie_fn->data_size) {
-			check_failed("Data size is different "
+		need_fix = TRUE;
+		goto fix_index;
+	}
+	/*
+	 * Is it need to check MFT/$FN's data size?
+	 * It looks like that Windows does not check MFT/$FN's data size.
+	 */
+	if (ni->data_size != ie_fn->data_size) {
+		check_failed("Data size is different "
 				"(IDX/$FN:%llu MFT/$DATA:%llu) on inode(%llu, %s)",
 				(unsigned long long)sle64_to_cpu(ie_fn->data_size),
 				(unsigned long long)ni->data_size,
 				(unsigned long long)ni->mft_no, filename);
-			need_fix = TRUE;
-			goto fix_index;
-		}
-	} else {
-		/* TODO: check data run and size in later */
+		need_fix = TRUE;
+		goto fix_index;
 	}
 
 	/* set NI_FileNameDirty in ni->state to sync
@@ -1159,10 +1160,8 @@ fix_index:
 
 			ie_fn->parent_directory = fn->parent_directory;
 
-			if (!(fn->file_attributes & FILE_ATTR_SPARSE_FILE)) {
-				ie_fn->allocated_size = cpu_to_sle64(ni->allocated_size);
-				ie_fn->data_size = cpu_to_sle64(ni->data_size);
-			}
+			ie_fn->allocated_size = cpu_to_sle64(ni->allocated_size);
+			ie_fn->data_size = cpu_to_sle64(ni->data_size);
 
 			ntfs_index_entry_mark_dirty(ictx);
 			fsck_err_fixed();
@@ -1763,7 +1762,7 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 
 	/*
 	 * check $BITMAP's cluster run
-	 * TODO: is it possible multiple $BITMAP attrib. in inode?
+	 * TODO: is it possible multiple $BITMAP attrib in inode?
 	 */
 	bm_na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
 	if (!bm_na) {
