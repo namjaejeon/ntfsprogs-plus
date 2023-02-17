@@ -181,10 +181,6 @@ static const struct option opts[] = {
 	{NULL,			0,			NULL,	 0  }
 };
 
-ntfschar NTFS_INDEX_I30[5] = { const_cpu_to_le16('$'), const_cpu_to_le16('I'),
-	const_cpu_to_le16('3'), const_cpu_to_le16('0'),
-	const_cpu_to_le16('\0') };
-
 static u8 *fsck_mft_bmp;
 static s64 fsck_mft_bmp_size;
 
