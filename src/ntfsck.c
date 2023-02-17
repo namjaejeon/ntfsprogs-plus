@@ -213,8 +213,8 @@ int ntfsck_mft_bmp_bit_set(u64 mft_no)
 		s64 off = fsck_mft_bmp_size;
 
 		fsck_mft_bmp_size =
-			(((mft_no >> 3) + 1 + (NTFS_BLOCK_SIZE - 1)) &
-			~(NTFS_BLOCK_SIZE - 1));
+			((mft_no >> 3) + 1 + (NTFS_BLOCK_SIZE - 1)) &
+			~(NTFS_BLOCK_SIZE - 1);
 
 		fsck_mft_bmp = ntfs_realloc(fsck_mft_bmp,
 				fsck_mft_bmp_size);
@@ -339,12 +339,11 @@ static void ntfsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
 
 static int ntfsck_set_lcnbmp_range(s64 pos, s64 length, u8 bit)
 {
-	if (fsck_lcn_bitmap_size < ((pos + length + 1) >> 3)) {
+	if (fsck_lcn_bitmap_size <= (pos + length) >> 3) {
 		int off = fsck_lcn_bitmap_size;
 
-		fsck_lcn_bitmap_size += ((pos + length + 1 +
-					(NTFS_BLOCK_SIZE - 1)) &
-				~(NTFS_BLOCK_SIZE - 1)) >> 3;
+		fsck_lcn_bitmap_size += (((pos + length) >> 3) + 1 +
+			(NTFS_BLOCK_SIZE - 1)) & ~(NTFS_BLOCK_SIZE - 1);
 		fsck_lcn_bitmap = ntfs_realloc(fsck_lcn_bitmap,
 				fsck_lcn_bitmap_size);
 		if (!fsck_lcn_bitmap) {
