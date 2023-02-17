@@ -2508,6 +2508,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 
 		ntfs_attr_put_search_ctx(sys_ctx);
 		ntfs_inode_close(sys_ni);
+		ntfs_index_ctx_reinit(ictx);
 	}
 
 put_index_ctx:
