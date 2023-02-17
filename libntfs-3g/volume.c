@@ -1181,18 +1181,16 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 
 		}
 		record_size = ntfs_mft_record_get_data_size(mrec);
-		if ((record_size <= sizeof(MFT_RECORD))
-		    || (record_size > vol->mft_record_size)
-		    || memcmp(mrec, mrec2, record_size)) {
+		if (use_mirr == TRUE && ((record_size <= sizeof(MFT_RECORD)) ||
+		    (record_size > vol->mft_record_size) ||
+		    memcmp(mrec, mrec2, record_size))) {
 			check_failed("$MFTMirr does not match $MFT (record "
 				"%d). Correcting differences in $MFT%s record",
 				i, use_mirr ? "" : "Mirr");
 			if (ntfsck_ask_repair(vol)) {
-				br = ntfs_mft_record_write(vol, i,
-						use_mirr ? mrec2 : mrec);
+				br = ntfs_mft_record_write(vol, i, mrec2);
 				if (br) {
-					ntfs_log_perror("Error correcting $MFT%s",
-							use_mirr ? "" : "Mirr");
+					ntfs_log_perror("Error correcting $MFTMirr");
 					goto io_error_exit;
 				}
 				fsck_err_fixed();
