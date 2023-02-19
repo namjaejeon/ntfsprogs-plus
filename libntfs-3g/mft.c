@@ -294,7 +294,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	}
 
 	/* check used size overflow */
-	if (!NVolNoFixupWarn(vol) && (biu > vol->mft_record_size)) {
+	if (!NVolNoFixupWarn(vol) && !NVolFsck(vol) && (biu > vol->mft_record_size)) {
 		ntfs_log_error("Record %llu has corrupt in-use size "
 			       "(%u > %u)\n", (unsigned long long)MREF(mref),
 			       (int)biu, (int)vol->mft_record_size);
@@ -331,15 +331,13 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		goto err_out;
 	}
 
-	if (!NVolNoFixupWarn(vol)) {
-		space = biu - offset;
+	if (NVolFsck(vol)) {
+		space = vol->mft_record_size - offset;
 		a = (ATTR_RECORD*)((char*)m + offset);
-		previous_type = AT_STANDARD_INFORMATION;
 
 		/* check all attributes inconsistency */
-		while ((space >= (s32)offsetof(ATTR_RECORD, resident_end))
-		    && (a->type != AT_END)
-		    && (le32_to_cpu(a->type) >= le32_to_cpu(previous_type))) {
+		while ((space >= (s32)offsetof(ATTR_RECORD, resident_end)) &&
+		       (a->type != AT_END)) {
 			if ((le32_to_cpu(a->length) <= (u32)space)
 			    && !(le32_to_cpu(a->length) & 7)) {
 				if (!ntfs_attr_inconsistent(vol, a, mref, &fixed)) {
@@ -356,19 +354,18 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 				goto err_out;
 			}
 		}
-		/* TODO: if attribute order is corrupted, fix it here? */
 
-		if (NVolFsck(vol)) {
-			/*
-			 * We are supposed to reach an AT_END. Check bytes_in_use value
-			 */
-			if ((a->type == AT_END) && (biu != offset + space)) {
-				check_failed("Bad end of MFT record %llu",
-						(unsigned long long)MREF(mref));
-				if (ntfsck_ask_repair(vol)) {
-					m->bytes_in_use = cpu_to_le32(offset + space);
-					fixed = TRUE;
-				}
+		/*
+		 * We are supposed to reach an AT_END. Check bytes_in_use value.
+		 * +8 mean the attribute terminator.
+		 */
+		if ((a->type == AT_END) && (biu != offset + 8)) {
+			check_failed("Record %llu has corrupt in-use size(%d)",
+					(unsigned long long)MREF(mref), biu);
+			if (ntfsck_ask_repair(vol)) {
+				m->bytes_in_use = cpu_to_le32(offset + 8);
+				fixed = TRUE;
+				fsck_err_fixed();
 			}
 		}
 	}
