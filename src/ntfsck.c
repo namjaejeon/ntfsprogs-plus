@@ -50,6 +50,7 @@
 #include "dir.h"
 #include "lcnalloc.h"
 
+#define RETURN_FS_NO_ERRORS (0)
 #define RETURN_FS_ERRORS_CORRECTED (1)
 #define RETURN_SYSTEM_NEEDS_REBOOT (2)
 #define RETURN_FS_ERRORS_LEFT_UNCORRECTED (4)
@@ -2577,7 +2578,7 @@ int main(int argc, char **argv)
 {
 	ntfs_volume *vol;
 	const char *path;
-	int c, errors = 0;
+	int c, errors = 0, ret;
 	unsigned long mnt_flags;
 
 	ntfs_log_set_handler(ntfs_log_handler_outerr);
@@ -2666,12 +2667,18 @@ int main(int argc, char **argv)
 
 err_out:
 	errors = fsck_errors - fsck_fixes;
-	if (errors)
+	if (errors) {
 		ntfs_log_info("%d errors found, %d fixed\n",
 				errors, fsck_fixes);
-	else
+		ret = RETURN_FS_ERRORS_LEFT_UNCORRECTED;
+	} else {
 		ntfs_log_info("Clean, No errors found or left (errors:%d, fixed:%d)\n",
 				fsck_errors, fsck_fixes);
+		if (fsck_fixes)
+			ret = RETURN_FS_ERRORS_CORRECTED;
+		else
+			ret = RETURN_FS_NO_ERRORS;
+	}
 
 	if (!errors && vol)
 		ntfsck_reset_dirty(vol);
@@ -2679,7 +2686,5 @@ err_out:
 	if (vol)
 		ntfsck_umount(vol);
 
-	if (errors)
-		return 1;
-	return 0;
+	return ret;
 }
