@@ -2432,6 +2432,47 @@ static void ntfsck_umount(ntfs_volume *vol)
 	ntfs_umount(vol, FALSE);
 }
 
+static inline BOOL ntfsck_opened_ni_vol(s64 mft_num)
+{
+	BOOL is_opened = FALSE;
+
+	switch (mft_num) {
+	case FILE_MFT:
+	case FILE_MFTMirr:
+	case FILE_Volume:
+	case FILE_Bitmap:
+	case FILE_Secure:
+	case FILE_root:
+		is_opened = TRUE;
+	}
+
+	return is_opened;
+}
+
+static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num)
+{
+	ntfs_inode *ni = NULL;
+
+	switch (mft_num) {
+	case FILE_MFT:
+		ni = vol->mft_ni;
+		break;
+	case FILE_MFTMirr:
+		ni = vol->mftmirr_ni;
+		break;
+	case FILE_Volume:
+		ni = vol->vol_ni;
+		break;
+	case FILE_Bitmap:
+		ni = vol->lcnbmp_ni;
+		break;
+	case FILE_Secure:
+		ni = vol->secure_ni;
+	}
+
+	return ni;
+}
+
 static int ntfsck_check_system_files(ntfs_volume *vol)
 {
 	ntfs_inode *sys_ni, *root_ni;
@@ -2463,19 +2504,26 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	 * entries.
 	 */
 	for (mft_num = FILE_MFT; mft_num < FILE_first_user; mft_num++) {
-		sys_ni = ntfs_inode_open(vol, mft_num);
+		sys_ni = ntfsck_get_opened_ni_vol(vol, mft_num);
 		if (!sys_ni) {
-			ntfs_log_error("Failed to open %ld system file\n",
-					mft_num);
-			goto put_index_ctx;
+			if (mft_num == FILE_root)
+				sys_ni = root_ni;
+			else {
+				sys_ni = ntfs_inode_open(vol, mft_num);
+				if (!sys_ni) {
+					ntfs_log_error("Failed to open %ld system file\n",
+							mft_num);
+					goto put_index_ctx;
+				}
+			}
 		}
 
 		ntfsck_update_lcn_bitmap(sys_ni);
 
-		if (sys_ni->vol->major_ver < 3 && mft_num > 10)
+		if (mft_num > FILE_Extend) {
+			ntfs_inode_close(sys_ni);
 			continue;
-		else if (mft_num > FILE_Extend)
-			continue;
+		}
 
 		sys_ctx = ntfs_attr_get_search_ctx(sys_ni, NULL);
 		if (!sys_ctx) {
@@ -2510,9 +2558,11 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			goto put_index_ctx;
 		}
 
-		ntfs_attr_put_search_ctx(sys_ctx);
-		ntfs_inode_close(sys_ni);
 		ntfs_index_ctx_reinit(ictx);
+		ntfs_attr_put_search_ctx(sys_ctx);
+		if (ntfsck_opened_ni_vol(mft_num) == TRUE)
+			continue;
+		ntfs_inode_close(sys_ni);
 	}
 
 put_index_ctx:
