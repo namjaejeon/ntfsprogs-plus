@@ -3435,7 +3435,7 @@ not_found:
  *	Returns 0 and dirty flag set 1, if the repairing is OK
  */
 
-int ntfs_attr_inconsistent(const ntfs_volume *vol, const ATTR_RECORD *a,
+int ntfs_attr_inconsistent(const ntfs_volume *vol, ATTR_RECORD *a,
 	const MFT_REF mref, BOOL *fixed)
 {
 	FILE_NAME_ATTR *fn;
@@ -3475,24 +3475,75 @@ int ntfs_attr_inconsistent(const ntfs_volume *vol, const ATTR_RECORD *a,
 			ret = -1;
 		}
 	} else {
-		if ((le32_to_cpu(a->length)
-			< offsetof(ATTR_RECORD, resident_end))
-		    || (le32_to_cpu(a->value_length) & 0xff000000)
-		    || (le16_to_cpu(a->value_offset) & 7)
-		    || (a->value_length
-			&& ((le16_to_cpu(a->value_offset)
-				+ le32_to_cpu(a->value_length))
-				> le32_to_cpu(a->length)))
-		    || (a->name_length
-			&& (((u32)le16_to_cpu(a->name_offset)
-				+ a->name_length * sizeof(ntfschar))
-				> le32_to_cpu(a->length)))) {
+		u32 attr_len = le32_to_cpu(a->length);
+		u32 value_len = le32_to_cpu(a->value_length);
+		u16 value_off = le16_to_cpu(a->value_offset);
+		u32 name_end = ((u32)le16_to_cpu(a->name_offset) + a->name_length * sizeof(ntfschar) + 7) & ~7;
+
+		if ((value_len & 0xff000000)) {
 			ntfs_log_error("Corrupt resident attribute"
 				" 0x%x in MFT record %lld\n",
 				(int)le32_to_cpu(a->type),
 				(long long)inum);
 			errno = EIO;
 			ret = -1;
+		}
+
+		if (value_off & 7) {
+			check_failed("Value offset badly aligned in attribute(type : 0x%x)",
+					a->type);
+			if (ntfsck_ask_repair(vol)) {
+				value_off += 7 & ~7;
+				a->value_offset = cpu_to_le16(value_off);
+				*fixed = TRUE;
+				fsck_err_fixed();
+			} else {
+				errno = EIO;
+				ret = -1;
+			}
+		}
+
+		if (a->name_offset && (u32)le16_to_cpu(a->name_offset) <
+		    offsetof(ATTR_RECORD, resident_end)) {
+			check_failed("Name offset is corrupted in attribute(type : 0x%x)",
+					a->type);
+			if (ntfsck_ask_repair(vol)) {
+				a->name_offset = cpu_to_le16(offsetof(ATTR_RECORD, resident_end));
+				*fixed = TRUE;
+				fsck_err_fixed();
+			} else {
+				errno = EIO;
+				ret = -1;
+			}
+		}
+
+		if (name_end > value_off) {
+			check_failed("Value offset is corrupted in attribute(type : 0x%x)",
+					a->type);
+			if (ntfsck_ask_repair(vol)) {
+				value_off = name_end;
+				a->value_offset = cpu_to_le16(value_off);
+				*fixed = TRUE;
+				fsck_err_fixed();
+			} else {
+				errno = EIO;
+				ret = -1;
+			}
+		}
+
+		if (((value_off + value_len + 7) & ~7) > attr_len ||
+		    attr_len < offsetof(ATTR_RECORD, resident_end)) {
+			check_failed("Attribute length is corrupted in attribute(type : 0x%x)",
+					a->type);
+			if (ntfsck_ask_repair(vol)) {
+				attr_len = (value_off + value_len + 7) & ~7;
+				a->length = cpu_to_le32(attr_len);
+				*fixed = TRUE;
+				fsck_err_fixed();
+			} else {
+				errno = EIO;
+				ret = -1;
+			}
 		}
 	}
 	if (!ret) {
