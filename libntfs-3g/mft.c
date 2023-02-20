@@ -287,7 +287,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	biu = le32_to_cpu(m->bytes_in_use);
 	if (biu & 7) {
 		check_failed("Used size of MFT record is badly aligned "
-				"in record %llu\n",
+				"in record %llu",
 			       (unsigned long long)MREF(mref));
 		fsck_err_found();
 		goto err_out;
@@ -308,9 +308,14 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 
 	/* check alignment of attribute start offset */
 	if (offset & 7) {
-		ntfs_log_error("Attributes badly aligned in record %llu\n",
+		check_failed("Attributes badly aligned in record %llu",
 			       (unsigned long long)MREF(mref));
-		fsck_err_found();
+		if (ntfsck_ask_repair(vol)) {
+			offset = (offset + 7) & ~7;
+			m->attrs_offset = cpu_to_le16(offset);
+			fixed = TRUE;
+			fsck_err_fixed();
+		}
 		goto err_out;
 	}
 
