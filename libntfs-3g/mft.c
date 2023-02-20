@@ -320,10 +320,15 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	}
 
 	if (offset < min_offset) {
-		ntfs_log_error("MFT record(%llu)'s attribute start offset "
-				"is corrupted\n",
+		check_failed("MFT record(%llu)'s attribute start offset "
+				"is corrupted",
 				(unsigned long long)MREF(mref));
-		fsck_err_found();
+		if (ntfsck_ask_repair(vol)) {
+			offset = min_offset;
+			m->attrs_offset = cpu_to_le16(offset);
+			fixed = TRUE;
+			fsck_err_fixed();
+		}
 		goto err_out;
 	}
 
