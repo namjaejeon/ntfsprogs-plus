@@ -196,6 +196,7 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 		struct rl_size *rls);
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
+static int ntfsck_initialize_index_attr(ntfs_inode *ni);
 
 char ntfsck_mft_bmp_bit_get(const u64 bit)
 {
@@ -713,8 +714,12 @@ delete_inodes:
 
 			/* Add index for orphaned inode */
 			if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
+				ntfsck_initialize_index_attr(ni);
+
 				fn->allocated_size = 0;
 				fn->data_size = 0;
+				ni->allocated_size = 0;
+				ni->data_size = 0;
 				ntfs_inode_mark_dirty(ni);
 			}
 
@@ -1548,7 +1553,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 
 	ir_na = ntfs_attr_open(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4);
 	if (!ir_na) {
-		ntfs_log_error("Can't not open $IR attribute from mft(%ld) entry\n",
+		ntfs_log_verbose("Can't not open $IR attribute from mft(%ld) entry\n",
 				ni->mft_no);
 		goto out;
 	}
