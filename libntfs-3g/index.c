@@ -1145,7 +1145,7 @@ int ntfs_ibm_modify(ntfs_index_context *icx, VCN vcn, int set)
 	int ret = STATUS_ERROR;
 
 	ntfs_log_trace("%s vcn: %lld\n", set ? "set" : "clear", (long long)vcn);
-	
+
 	na = ntfs_attr_open(icx->ni, AT_BITMAP,  icx->name, icx->name_len);
 	if (!na) {
 		ntfs_log_perror("Failed to open $BITMAP attribute");
@@ -1158,19 +1158,37 @@ int ntfs_ibm_modify(ntfs_index_context *icx, VCN vcn, int set)
 				ntfs_log_perror("Failed to truncate AT_BITMAP");
 				goto err_na;
 			}
+
+			/* check only for fsck */
+			if (NVolIsOnFsck(icx->ni->vol) && icx->ni->fsck_ibm) {
+				icx->ni->fsck_ibm = ntfs_realloc(icx->ni->fsck_ibm,
+						(na->data_size + 8) & ~7);
+				if (!icx->ni->fsck_ibm) {
+					ntfs_log_perror("Failed to realloc fsck_ibm");
+					goto err_na;
+				}
+			}
 		}
 	}
-	
+
 	if (ntfs_attr_pread(na, bpos, 1, &byte) != 1) {
 		ntfs_log_perror("Failed to read $BITMAP");
 		goto err_na;
 	}
 
-	if (set) 
+	/* check only for fsck */
+	if (NVolIsOnFsck(icx->ni->vol) && icx->ni->fsck_ibm) {
+		if (set)
+			ntfs_bit_set(icx->ni->fsck_ibm, vcn, 1);
+		else
+			ntfs_bit_set(icx->ni->fsck_ibm, vcn, 0);
+	}
+
+	if (set)
 		byte |= bit;
 	else
 		byte &= ~bit;
-		
+
 	if (ntfs_attr_pwrite(na, bpos, 1, &byte) != 1) {
 		ntfs_log_perror("Failed to write $Bitmap");
 		goto err_na;

@@ -160,10 +160,11 @@ struct _ntfs_inode {
 	ntfs_time last_access_time;
 				/* NTFS 3.x extensions added by JPA */
 				/* only if NI_v3_Extensions is set in state */
- 	le32 owner_id;
+	le32 owner_id;
 	le32 security_id;
 	le64 quota_charged;
 	le64 usn;
+	void *fsck_ibm;		/* for bitmap tracking in fsck */
 };
 
 typedef enum {

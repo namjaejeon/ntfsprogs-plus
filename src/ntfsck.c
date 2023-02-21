@@ -2083,7 +2083,25 @@ remove_index:
 
 }
 
-static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
+/*
+ * Check index and inode which is pointed by index.
+ * if pointed inode is directory, then add it to ntfs_dir_list.
+ *
+ * @vol:	ntfs_volume
+ * @ie:		index entry to check
+ * @ictx:	index context to handle index entry
+ *
+ * @return:	return 0, for checking success,
+ *		return 1, removal of index due to failure,
+ *		return < 0, for other cases
+ *
+ * After calling ntfs_index_rm(), ictx->entry will point next entry
+ * of deleted entry. So caller can distinguish what happened in this
+ * function using return value.(if this function return 1, caller do
+ * not need to call ntfs_index_next(), cause ictx->entry already point
+ * next entry.
+ */
+static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			       ntfs_index_context *ictx)
 {
 	char *filename;
@@ -2162,6 +2180,87 @@ err_out:
 	return ret;
 }
 
+/*
+ * set bitmap of current index context's all parent vcn.
+ *
+ */
+static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx, s64 size)
+{
+	INDEX_HEADER *ih;
+	s64 vcn = -1;
+	int i;
+
+	if (!ictx->ib)
+		return STATUS_ERROR;
+
+	ih = &ictx->ib->index;
+	if ((ih->ih_flags & NODE_MASK) == LEAF_NODE) {
+		for (i = ictx->pindex; i > 0; i--) {
+			vcn = ictx->parent_vcn[i];
+			if (vcn >= 0 && ((vcn >> 3) + 1) <= size)
+				ntfs_bit_set(ni->fsck_ibm, vcn, 1);
+		}
+	}
+	return STATUS_OK;
+}
+
+static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
+{
+	s64 ibm_size = 0;
+	s64 wcnt = 0;
+	u8 *ni_ibm = NULL;	/* for index bitmap reading from disk: $BITMAP */
+	ntfs_volume *vol;
+
+	if (!ni || !ni->fsck_ibm)
+		return STATUS_ERROR;
+
+	vol = ni->vol;
+
+	/* read index bitmap from disk */
+	ni_ibm = ntfs_attr_readall(ni, AT_BITMAP, NTFS_INDEX_I30, 4, &ibm_size);
+	if (!ni_ibm) {
+		ntfs_log_error("Failed to read $BITMAP of inode(%llu)\n",
+				(unsigned long long)ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	if (ibm_size != bm_na->data_size)
+		ntfs_log_info("\nbitmap changed during check_inodes\n\n");
+
+	if (memcmp(ni->fsck_ibm, ni_ibm, ibm_size)) {
+#ifdef DEBUG
+		int pos = 0;
+		int remain = 0;
+
+		remain = ibm_size;
+		while (remain > 0) {
+			ntfs_log_verbose("disk $IA bitmap : %08llx\n",
+					*(unsigned long long *)(ni_ibm + pos));
+			ntfs_log_verbose("fsck $IA bitmap : %08llx\n",
+					*(unsigned long long *)(ni->fsck_ibm + pos));
+
+			remain -= sizeof(unsigned long long);
+			pos += sizeof(unsigned long long);
+		}
+#endif
+		check_failed("Inode(%llu) $IA bitmap different. Fix it",
+				(unsigned long long)ni->mft_no);
+		if (ntfsck_ask_repair(vol)) {
+			wcnt = ntfs_attr_pwrite(bm_na, 0, ibm_size, ni->fsck_ibm);
+			if (wcnt == ibm_size)
+				fsck_err_fixed();
+			else
+				ntfs_log_error("Can't write $BITMAP(%lld) of inode(%llu)\n",
+						(long long)wcnt,
+						(unsigned long long)ni->mft_no);
+		}
+	}
+
+	free(ni_ibm);
+
+	return STATUS_OK;
+}
+
 static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 {
 	ntfs_inode *ni;
@@ -2170,7 +2269,8 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	INDEX_ENTRY *next;
 	INDEX_ENTRY *prev;
 	ntfs_attr_search_ctx *ctx = NULL;
-	ntfs_index_context *ictx;
+	ntfs_index_context *ictx = NULL;
+	ntfs_attr *bm_na = NULL;
 	int ret;
 	COLLATION_RULES cr;
 
@@ -2196,6 +2296,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	ntfs_list_add(&dir->list, &ntfs_dirs_list);
 
 	while (!ntfs_list_empty(&ntfs_dirs_list)) {
+
 		dir = ntfs_list_entry(ntfs_dirs_list.next, struct dir, list);
 
 		ctx = ntfs_attr_get_search_ctx(dir->ni, NULL);
@@ -2211,17 +2312,17 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			goto err_continue;
 		}
 
-		/* Get to the index root value. */
-		ir = (INDEX_ROOT*)((u8*)ctx->attr +
-				le16_to_cpu(ctx->attr->value_offset));
-
-		cr = ir->collation_rule;
-
 		ictx = ntfs_index_ctx_get(dir->ni, NTFS_INDEX_I30, 4);
 		if (!ictx) {
 			ntfs_attr_put_search_ctx(ctx);
 			goto err_continue;
 		}
+
+		/* Get to the index root value. */
+		ir = (INDEX_ROOT *)((u8 *)ctx->attr +
+				le16_to_cpu(ctx->attr->value_offset));
+
+		cr = ir->collation_rule;
 
 		ictx->ir = ir;
 		ictx->actx = ctx;
@@ -2246,12 +2347,25 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				le32_to_cpu(ir->index.entries_offset));
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
+			/* read $IA */
 			ictx->ia_na = ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
 						    ictx->name, ictx->name_len);
 			if (!ictx->ia_na) {
 				ntfs_log_perror("Failed to open index allocation of inode "
 						"%llu", (unsigned long long)dir->ni->mft_no);
 				goto err_continue;
+			}
+
+			/* read $BITMAP */
+			bm_na = ntfs_attr_open(dir->ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+			if (bm_na) {
+				/* allocate for $IA bitmap */
+				dir->ni->fsck_ibm = ntfs_calloc(bm_na->allocated_size);
+				if (!dir->ni->fsck_ibm) {
+					ntfs_log_perror("Failed to allocate memory\n");
+					ntfs_attr_put_search_ctx(ctx);
+					goto err_continue;
+				}
 			}
 		}
 		prev = next;
@@ -2273,19 +2387,23 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		}
 
 		if (!(next->ie_flags & INDEX_ENTRY_END))
-			goto add_dir_list;
+			goto check_index;
 
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
-add_dir_list:
+check_index:
 			prev = next;
-			ret = ntfsck_add_dir_list(vol, next, ictx);
+			ret = ntfsck_check_index(vol, next, ictx);
 			if (ret) {
 				next = ictx->entry;
 				if (ret < 0)
 					break;
 				if (!(next->ie_flags & INDEX_ENTRY_END))
-					goto add_dir_list;
+					goto check_index;
 			}
+
+			/* check bitmap */
+			if (bm_na && ictx->ib)
+				ntfsck_set_index_bitmap(dir->ni, ictx, bm_na->allocated_size);
 		}
 
 next_dir:
@@ -2335,7 +2453,24 @@ next_dir:
 				fsck_err_fixed();
 			}
 		}
+
+		/* compare index allocation bitmap between disk & fsck */
+		if (bm_na) {
+			if (ntfsck_check_index_bitmap(dir->ni, bm_na))
+				goto err_continue;
+
+			if (dir->ni->fsck_ibm) {
+				free(dir->ni->fsck_ibm);
+				dir->ni->fsck_ibm = NULL;
+			}
+		}
+
 err_continue:
+		if (bm_na) {
+			ntfs_attr_close(bm_na);
+			bm_na = NULL;
+		}
+
 		if (ictx) {
 			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 			ntfs_index_ctx_put(ictx);
