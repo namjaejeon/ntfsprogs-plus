@@ -1531,6 +1531,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 			goto out;
 		}
 		ntfs_attr_close(ia_na);
+		ia_na = NULL;
 	}
 
 	bm_na = ntfs_attr_open(ni, AT_BITMAP, NTFS_INDEX_I30, 4);
@@ -1542,6 +1543,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 			goto out;
 		}
 		ntfs_attr_close(bm_na);
+		bm_na = NULL;
 	}
 
 	ir_na = ntfs_attr_open(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4);
@@ -1577,6 +1579,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 	}
 
 	ntfs_attr_close(ir_na);
+	ir_na = NULL;
 
 	ret = STATUS_ERROR;	/* initialize return code */
 
