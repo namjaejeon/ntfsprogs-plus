@@ -519,6 +519,7 @@ static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 				(unsigned long long)ni->mft_no);
 }
 
+/* only called from repairing orphaned file */
 static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 		FILE_NAME_ATTR *fn)
 {
@@ -721,6 +722,7 @@ delete_inodes:
 				goto next_item;
 			else if (ret == STATUS_ERROR) {
 				err = -EIO;
+				ni = NULL;
 				goto next_item;
 			}
 
@@ -744,6 +746,7 @@ delete_inodes:
 				goto next_item;
 			else if (ret == STATUS_ERROR || ret == STATUS_NOT_FOUND) {
 				err = -EIO;
+				ni = NULL;
 				goto next_item;
 			}
 
@@ -2080,7 +2083,8 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 		return 0;
 
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
-	ntfs_log_verbose("%ld, %s\n", MREF(mref), filename);
+	ntfs_log_verbose("ntfsck_check_index %ld, %s\n", MREF(mref), filename);
+
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
 		/* skip checking for system files */
@@ -2089,6 +2093,8 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 			if (ret) {
 				ntfs_log_info("ntfsck_check_inode(%llu) failed\n",
 						(unsigned long long)ni->mft_no);
+
+				ntfs_inode_close(ni);
 				goto remove_index;
 			}
 		} else {
@@ -2102,6 +2108,7 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 			if (!dir) {
 				ntfs_log_error("Failed to allocate for subdir.\n");
 				ret = -1;
+				ntfs_inode_close(ni);
 				goto err_out;
 			}
 
@@ -2113,8 +2120,9 @@ static int ntfsck_add_dir_list(ntfs_volume *vol, INDEX_ENTRY *ie,
 	} else {
 
 remove_index:
-		check_failed("mft entry(%llu) is corrupted, Removing index entry",
-				(unsigned long long)MREF(mref));
+		check_failed("mft entry(%llu:%s) is corrupted, Removing index entry(%llu)",
+				(unsigned long long)MREF(mref), filename,
+				(unsigned long long)MREF_LE(ie_fn->parent_directory));
 		if (ntfsck_ask_repair(vol)) {
 			ictx->entry = ie;
 			ret = ntfs_index_rm(ictx);
@@ -2128,16 +2136,7 @@ remove_index:
 				fsck_err_fixed();
 			}
 			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
-
-			if (ni) {
-				ntfsck_check_non_resident_cluster(ni, 0);
-				ntfsck_free_mft_records(vol, ni);
-				ni = NULL;
-			}
 		}
-
-		if (ni)
-			ntfs_inode_close(ni);
 	}
 
 err_out:
@@ -2182,9 +2181,8 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		dir = ntfs_list_entry(ntfs_dirs_list.next, struct dir, list);
 
 		ctx = ntfs_attr_get_search_ctx(dir->ni, NULL);
-		if (!ctx) {
+		if (!ctx)
 			goto err_continue;
-		}
 
 		/* Find the index root attribute in the mft record. */
 		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
