@@ -142,14 +142,15 @@ NTFS_LIST_HEAD(ntfs_dirs_list);
 
 int parse_count = 1;
 
+#define NTFS_PROGS	"ntfsck"
 /**
  * usage
  */
 __attribute__((noreturn))
 static void usage(int error)
 {
-	ntfs_log_info("ntfsck v%s (libntfs-3g)\n\n"
-		      "Usage: ntfsck [options] device\n"
+	ntfs_log_info("%s v%s (libntfs-3g)\n\n"
+		      "Usage: %s [options] device\n"
 		      "-a, --repair-auto	auto-repair. no questions\n"
 		      "-p,			auto-repair. no questions\n"
 		      "-n, --repair-no		just check the consistency and no fix\n"
@@ -157,7 +158,11 @@ static void usage(int error)
 		      "-y, --repair-yes		all yes about all question\n"
 		      "-v, --verbose		verbose\n"
 		      "-V, --version		version\n\n"
-		      "For example: ntfsck /dev/sda1\n\n", VERSION);
+		      "NOTE: -a/-p, -C, -n, -r, -y options are mutually exclusive with each other options\n\n"
+		      "For example: %s /dev/sda1\n"
+		      "For example: %s -C /dev/sda1\n"
+		      "For example: %s -a /dev/sda1\n\n",
+		      NTFS_PROGS, VERSION, NTFS_PROGS, NTFS_PROGS, NTFS_PROGS, NTFS_PROGS);
 	exit(error ? RETURN_USAGE_OR_SYNTAX_ERROR : 0);
 }
 
@@ -167,7 +172,7 @@ static void usage(int error)
 __attribute__((noreturn))
 static void version(void)
 {
-	ntfs_log_info("ntfsck v%s\n\n", VERSION);
+	ntfs_log_info("%s v%s\n\n", NTFS_PROGS, VERSION);
 	ntfs_log_info("%s\n%s%s", ntfs_gpl, ntfs_bugs, ntfs_home);
 	exit(0);
 }
@@ -2588,27 +2593,70 @@ int main(int argc, char **argv)
 	const char *path;
 	int c, errors = 0, ret;
 	unsigned long mnt_flags;
+	BOOL check_dirty_only = FALSE;
 
 	ntfs_log_set_handler(ntfs_log_handler_outerr);
 
 	ntfs_log_set_levels(NTFS_LOG_LEVEL_INFO);
 
-	option.flags = NTFS_MNT_FS_ASK_REPAIR;
 	option.verbose = 0;
 	opterr = 0;
-	while ((c = getopt_long(argc, argv, "anpyhvV", opts, NULL)) != EOF) {
+	while ((c = getopt_long(argc, argv, "aCnpyhvV", opts, NULL)) != EOF) {
 		switch (c) {
 		case 'a':
 		case 'p':
+			if (option.flags & (NTFS_MNT_FS_NO_REPAIR |
+						NTFS_MNT_FS_ASK_REPAIR |
+						NTFS_MNT_FS_YES_REPAIR) ||
+					check_dirty_only == TRUE) {
+conflict_option:
+				ntfs_log_error("\n%s: "
+				"Only one of the optinos -a/-p, -C, -n, -r or -y may be specified.\n",
+				NTFS_PROGS);
+
+				exit(RETURN_USAGE_OR_SYNTAX_ERROR);
+			}
+
 			option.flags = NTFS_MNT_FS_AUTO_REPAIR;
 			break;
+		case 'C':	/* exclusive with others */
+			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
+							NTFS_MNT_FS_NO_REPAIR |
+							NTFS_MNT_FS_ASK_REPAIR |
+							NTFS_MNT_FS_YES_REPAIR)) {
+				goto conflict_option;
+			}
+
+			check_dirty_only = TRUE;
+			break;
 		case 'n':
+			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
+						NTFS_MNT_FS_ASK_REPAIR |
+						NTFS_MNT_FS_YES_REPAIR) ||
+					check_dirty_only == TRUE) {
+				goto conflict_option;
+			}
+
 			option.flags = NTFS_MNT_FS_NO_REPAIR | NTFS_MNT_RDONLY;
 			break;
 		case 'r':
+			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
+						NTFS_MNT_FS_NO_REPAIR |
+						NTFS_MNT_FS_YES_REPAIR) ||
+					check_dirty_only == TRUE) {
+				goto conflict_option;
+			}
+
 			option.flags = NTFS_MNT_FS_ASK_REPAIR;
 			break;
 		case 'y':
+			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
+						NTFS_MNT_FS_NO_REPAIR |
+						NTFS_MNT_FS_ASK_REPAIR) ||
+					check_dirty_only == TRUE) {
+				goto conflict_option;
+			}
+
 			option.flags = NTFS_MNT_FS_YES_REPAIR;
 			break;
 		case 'h':
@@ -2629,6 +2677,14 @@ int main(int argc, char **argv)
 		}
 	}
 	option.flags |= NTFS_MNT_FSCK;
+
+	/* If not set fsck repair option, set default fsck flags to ASK mode. */
+	if (!(option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
+				NTFS_MNT_FS_NO_REPAIR |
+				NTFS_MNT_FS_ASK_REPAIR |
+				NTFS_MNT_FS_YES_REPAIR))) {
+		option.flags |= NTFS_MNT_FS_ASK_REPAIR;
+	}
 
 	if (optind != argc - 1)
 		usage(1);
@@ -2656,13 +2712,23 @@ int main(int argc, char **argv)
 	if (!vol)
 		goto err_out;
 
+	/* Just return the volume dirty flags when '-C' option is specified. */
+	if (check_dirty_only == TRUE) {
+		if (vol->flags & VOLUME_IS_DIRTY) {
+			if (option.verbose)
+				ntfs_log_info("Check volume: Volume is dirty.\n");
+			exit(RETURN_FS_ERRORS_LEFT_UNCORRECTED);
+		} else {
+			if (option.verbose)
+				ntfs_log_warning("Check volume: Volume is clean.\n");
+			exit(RETURN_FS_NO_ERRORS);
+		}
+	}
+
 	ntfsck_check_system_files(vol);
 
 	if (ntfsck_replay_log(vol))
 		goto err_out;
-
-	if (vol->flags & VOLUME_IS_DIRTY)
-		ntfs_log_warning("Volume is dirty.\n");
 
 	if (ntfsck_scan_index_entries(vol)) {
 		ntfs_log_error("Stop processing fsck due to critical problems\n");
