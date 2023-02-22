@@ -1046,6 +1046,11 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		}
 	}
 
+	/*
+	 * Windows chkdsk seems to fix reparse tag of index entry silently.
+	 * And don't touch reparse tags of MFT/$FN and $Reparse attribute.
+	 */
+#ifdef UNUSED
 	/* check reparse point */
 	if (ni->flags & FILE_ATTR_REPARSE_POINT) {
 		ntfs_attr_search_ctx *_ctx = NULL;
@@ -1083,6 +1088,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		}
 		ntfs_attr_put_search_ctx(_ctx);
 	}
+#endif
 
 	/* Does it need to check? */
 
