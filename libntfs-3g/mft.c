@@ -289,7 +289,6 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		check_failed("Used size of MFT record is badly aligned "
 				"in record %llu",
 			       (unsigned long long)MREF(mref));
-		fsck_err_found();
 		goto err_out;
 	}
 
@@ -355,7 +354,6 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 			} else {
 				ntfs_log_error("Corrupted MFT record %llu\n",
 				       (unsigned long long)MREF(mref));
-				fsck_err_found();
 				goto err_out;
 			}
 		}
