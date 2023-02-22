@@ -2739,8 +2739,8 @@ conflict_option:
 err_out:
 	errors = fsck_errors - fsck_fixes;
 	if (errors) {
-		ntfs_log_info("%d errors found, %d fixed\n",
-				errors, fsck_fixes);
+		ntfs_log_info("%d errors left (errors:%d, fixed:%d)\n",
+				errors, fsck_errors, fsck_fixes);
 		ret = RETURN_FS_ERRORS_LEFT_UNCORRECTED;
 	} else {
 		ntfs_log_info("Clean, No errors found or left (errors:%d, fixed:%d)\n",
