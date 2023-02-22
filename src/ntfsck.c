@@ -605,21 +605,17 @@ stack_of:
 		of = ntfs_list_entry(ntfs_orphan_list.next, struct orphan_mft, list);
 
 		if (err) {
-			fsck_err_canceled();
+			err = 0;
 			goto delete_inodes;
 		}
 
 		ni = ntfs_inode_open(vol, of->mft_no);
-		if (!ni) {
-			err = -EIO;
-			fsck_err_canceled();
+		if (!ni)
 			goto delete_inodes;
-		}
 
 		ctx = ntfs_attr_get_search_ctx(ni, NULL);
 		if (!ctx) {
-			err = -ENOMEM;
-			fsck_err_canceled();
+			ntfs_log_error("Failed to allocate attribute context\n");
 			goto delete_inodes;
 		}
 
@@ -627,8 +623,9 @@ stack_of:
 						CASE_SENSITIVE, 0, NULL, 0, ctx);
 		if (err) {
 			/* $FILE_NAME lookup failed */
-			err = -ENOENT;
-			fsck_err_canceled();
+			ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%llu)\n",
+					(unsigned long long)ni->mft_no);
+			err = 0;
 			goto delete_inodes;
 		}
 

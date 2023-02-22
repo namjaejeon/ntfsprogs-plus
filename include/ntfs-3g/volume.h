@@ -74,12 +74,6 @@ extern int fsck_fixes;
 		fsck_errors++; \
 	} while (0)
 
-/* It is called when it turns out that doesn't need to repair */
-#define fsck_err_canceled() \
-	do { \
-		fsck_errors--; \
-	} while (0)
-
 /* It is called after repair completed */
 #define fsck_err_fixed() \
 	do { \
