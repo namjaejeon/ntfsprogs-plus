@@ -382,6 +382,7 @@ extern s64 ntfs_get_attribute_value_length(const ATTR_RECORD *a);
  */
 extern s64 ntfs_get_attribute_value(const ntfs_volume *vol,
 				    const ATTR_RECORD *a, u8 *b);
+extern BOOL ntfs_is_valid_attr_type(const ATTR_RECORD *a);
 
 extern void  ntfs_attr_name_free(char **name);
 extern char *ntfs_attr_name_get(const ntfschar *uname, const int uname_len);
