@@ -560,7 +560,7 @@ static int ntfsck_fix_boot_sector(ntfs_volume *vol, char *full_bs,
  * Return: 0 ok, 1 error.
  */
 static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
-{;
+{
 	NTFS_BOOT_SECTOR *ntfs_boot;
 	s32 sector_size;
 	struct ntfs_device *dev = vol->dev;
@@ -719,6 +719,7 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	vol->dev = dev;
 	
 	if (ntfsck_verify_boot_sector(vol)) {
+		errno = EOPNOTSUPP;
 		goto error_exit;
 	}
 

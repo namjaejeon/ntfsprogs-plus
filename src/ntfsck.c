@@ -57,7 +57,7 @@
 #define RETURN_OPERATIONAL_ERROR (8)
 #define RETURN_USAGE_OR_SYNTAX_ERROR (16)
 #define RETURN_CANCELLED_BY_USER (32)
-/* Where did 64 go? */
+#define RETURN_FS_NOT_SUPPORT (64)	/* Not defined in fsck man page */
 #define RETURN_SHARED_LIBRARY_ERROR (128)
 
 /* todo: command line: (everything is optional)
@@ -2863,18 +2863,24 @@ conflict_option:
 				path);
 
 	vol = ntfsck_mount(path, option.flags);
-	if (!vol)
+	if (!vol) {
+		/*
+		 * Defined the error code RETURN_FS_NOT_SUPPORT(64),
+		 * but not use now, just return RETURN_OPERATIONAL_ERROR
+		 * like ext4 filesystem.
+		 */
+		if (errno == EOPNOTSUPP)
+			exit(RETURN_OPERATIONAL_ERROR);
 		goto err_out;
+	}
 
 	/* Just return the volume dirty flags when '-C' option is specified. */
 	if (check_dirty_only == TRUE) {
 		if (vol->flags & VOLUME_IS_DIRTY) {
-			if (option.verbose)
-				ntfs_log_info("Check volume: Volume is dirty.\n");
+			ntfs_log_info("Check volume: Volume is dirty.\n");
 			exit(RETURN_FS_ERRORS_LEFT_UNCORRECTED);
 		} else {
-			if (option.verbose)
-				ntfs_log_warning("Check volume: Volume is clean.\n");
+			ntfs_log_warning("Check volume: Volume is clean.\n");
 			exit(RETURN_FS_NO_ERRORS);
 		}
 	}
