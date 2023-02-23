@@ -345,7 +345,7 @@ static int ntfsck_set_lcnbmp_range(s64 pos, s64 length, u8 bit)
 	if (fsck_lcn_bitmap_size <= (pos + length) >> 3) {
 		int off = fsck_lcn_bitmap_size;
 
-		fsck_lcn_bitmap_size += (((pos + length) >> 3) + 1 +
+		fsck_lcn_bitmap_size = (((pos + length) >> 3) + 1 +
 			(NTFS_BLOCK_SIZE - 1)) & ~(NTFS_BLOCK_SIZE - 1);
 		fsck_lcn_bitmap = ntfs_realloc(fsck_lcn_bitmap,
 				fsck_lcn_bitmap_size);
@@ -2414,7 +2414,7 @@ static ntfs_volume *ntfsck_mount(const char *path __attribute__((unused)),
 		return NULL;
 
 	fsck_lcn_bitmap_size = NTFS_BLOCK_SIZE;
-	fsck_lcn_bitmap = ntfs_calloc(NTFS_BLOCK_SIZE);
+	fsck_lcn_bitmap = ntfs_calloc(fsck_lcn_bitmap_size);
 	if (!fsck_lcn_bitmap) {
 		ntfs_umount(vol, FALSE);
 		return NULL;
