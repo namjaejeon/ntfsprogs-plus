@@ -135,6 +135,35 @@ s64 ntfs_get_attribute_value_length(const ATTR_RECORD *a)
 	return (s64)le32_to_cpu(a->value_length);
 }
 
+BOOL ntfs_is_valid_attr_type(const ATTR_RECORD *a)
+{
+	switch (a->type) {
+	case AT_UNUSED:
+	case AT_STANDARD_INFORMATION:
+	case AT_ATTRIBUTE_LIST:
+	case AT_FILE_NAME:
+	case AT_OBJECT_ID:
+	case AT_SECURITY_DESCRIPTOR:
+	case AT_VOLUME_NAME:
+	case AT_VOLUME_INFORMATION:
+	case AT_DATA:
+	case AT_INDEX_ROOT:
+	case AT_INDEX_ALLOCATION:
+	case AT_BITMAP:
+	case AT_REPARSE_POINT:
+	case AT_EA_INFORMATION:
+	case AT_EA:
+	case AT_PROPERTY_SET:
+	case AT_LOGGED_UTILITY_STREAM:
+	case AT_FIRST_USER_DEFINED_ATTRIBUTE:
+	case AT_END:
+		if (a->length != 0)
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
 /**
  * ntfs_get_attribute_value - Get a copy of an attribute
  * @vol:	

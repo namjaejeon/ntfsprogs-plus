@@ -235,7 +235,6 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 			  MFT_RECORD *m)
 {
 	ATTR_RECORD *a;
-	ATTR_TYPES previous_type;
 	int ret = -1;
 	u32 offset;	/* attribute start offset */
 	u32 min_offset;	/* minimum attribute start offset */
@@ -342,10 +341,16 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		/* check all attributes inconsistency */
 		while ((space >= (s32)offsetof(ATTR_RECORD, resident_end)) &&
 		       (a->type != AT_END)) {
+			if (ntfs_is_valid_attr_type(a) == FALSE) {
+				offset += sizeof(ATTR_TYPES);
+				a = (ATTR_RECORD *)((char *)m + offset);
+				space -= sizeof(ATTR_TYPES);
+				continue;
+			}
+
 			if ((le32_to_cpu(a->length) <= (u32)space)
 			    && !(le32_to_cpu(a->length) & 7)) {
 				if (!ntfs_attr_inconsistent(vol, a, mref, &fixed)) {
-					previous_type = a->type;
 					offset += le32_to_cpu(a->length);
 					space -= le32_to_cpu(a->length);
 					a = (ATTR_RECORD*)((char*)m + offset);
