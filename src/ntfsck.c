@@ -2514,6 +2514,8 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	 * entries.
 	 */
 	for (mft_num = FILE_MFT; mft_num < FILE_first_user; mft_num++) {
+		if (vol->major_ver < 3 && mft_num == FILE_Extend)
+			continue;
 		sys_ni = ntfsck_get_opened_ni_vol(vol, mft_num);
 		if (!sys_ni) {
 			if (mft_num == FILE_root)
