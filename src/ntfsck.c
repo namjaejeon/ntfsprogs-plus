@@ -1962,11 +1962,13 @@ static int ntfsck_check_file(ntfs_inode *ni)
 					(unsigned long long)ni->allocated_size,
 					(unsigned long long)na->compressed_size,
 					(unsigned long long)rls.real_asize);
-			na->compressed_size = rls.real_asize;
-			ni->allocated_size = na->compressed_size;
-			ntfs_inode_mark_dirty(ni);
-			NInoFileNameSetDirty(ni);
-			fsck_err_fixed();
+			if (ntfsck_ask_repair(vol)) {
+				na->compressed_size = rls.real_asize;
+				ni->allocated_size = na->compressed_size;
+				ntfs_inode_mark_dirty(ni);
+				NInoFileNameSetDirty(ni);
+				fsck_err_fixed();
+			}
 		}
 	} else {
 		if ((si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED)) ||
