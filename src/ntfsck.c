@@ -711,7 +711,7 @@ delete_inodes:
 				ntfs_log_error("Failed to check parent directory(%lld) "
 						"for repairing orphan inode\n",
 						(unsigned long long)ni->mft_no);
-				goto next_item;
+				goto delete_inodes;
 			}
 
 			/* Add index for orphaned inode */
@@ -731,7 +731,7 @@ delete_inodes:
 			else if (ret == STATUS_ERROR) {
 				err = -EIO;
 				ni = NULL;
-				goto next_item;
+				goto delete_inodes;
 			}
 
 			/* Not found index for $FN */
@@ -745,7 +745,7 @@ delete_inodes:
 						(unsigned long long)ni->mft_no,
 						(unsigned long long)parent_ni->mft_no, err);
 				err = -EIO;
-				goto next_item;
+				goto delete_inodes;
 			}
 
 			/* check again after adding $FN to index */
@@ -755,7 +755,7 @@ delete_inodes:
 			else if (ret == STATUS_ERROR || ret == STATUS_NOT_FOUND) {
 				err = -EIO;
 				ni = NULL;
-				goto next_item;
+				goto delete_inodes;
 			}
 
 			ntfs_bit_set(fsck_mft_bmp, ni->mft_no, 1);
