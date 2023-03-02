@@ -1559,7 +1559,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 
 	ir_na = ntfs_attr_open(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4);
 	if (!ir_na) {
-		ntfs_log_verbose("Can't not open $IR attribute from mft(%ld) entry\n",
+		ntfs_log_verbose("Can't open $IR attribute from mft(%ld) entry\n",
 				ni->mft_no);
 		goto out;
 	}
