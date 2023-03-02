@@ -750,9 +750,7 @@ delete_inodes:
 
 			/* check again after adding $FN to index */
 			ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
-			if (ret == STATUS_OK)
-				goto next_item;
-			else if (ret == STATUS_ERROR || ret == STATUS_NOT_FOUND) {
+			if (ret == STATUS_ERROR || ret == STATUS_NOT_FOUND) {
 				err = -EIO;
 				ni = NULL;
 				goto delete_inodes;
