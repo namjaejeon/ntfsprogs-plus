@@ -153,6 +153,7 @@ static void usage(int error)
 		      "Usage: %s [options] device\n"
 		      "-a, --repair-auto	auto-repair. no questions\n"
 		      "-p,			auto-repair. no questions\n"
+		      "-C,			just check volume dirty\n"
 		      "-n, --repair-no		just check the consistency and no fix\n"
 		      "-r, --repair		Repair interactively\n"
 		      "-y, --repair-yes		all yes about all question\n"
