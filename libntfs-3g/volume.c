@@ -564,6 +564,7 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 	NTFS_BOOT_SECTOR *ntfs_boot;
 	s32 sector_size;
 	struct ntfs_device *dev = vol->dev;
+	int res = 1;
 
 	sector_size = ntfs_device_sector_size_get(dev);
 	if (sector_size <= 0)
@@ -587,10 +588,11 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 		return 1;
 	}
 
-	if (!ntfs_boot_sector_is_ntfs(ntfs_boot) ||
-	    (ntfs_boot_sector_parse(vol, ntfs_boot) < 0)) {
-		int res = 1;
+	if (ntfs_boot_sector_is_ntfs(ntfs_boot) &&
+	    (ntfs_boot_sector_parse(vol, ntfs_boot) == 0))
+		goto out;
 
+	if (NVolFsck(vol)) {
 		check_failed("Boot sector: invalid boot sector, Fix");
 		if (ntfsck_ask_repair(vol)) {
 			s64 actual_sectors, shown_sectors;
@@ -627,7 +629,9 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 		}
 	}
 
-	ntfs_log_verbose("Boot sector verification complete. Proceeding to $MFT");
+out:
+	if (NVolFsck(vol))
+		ntfs_log_verbose("Boot sector verification complete.\n");
 
 	// todo: if partition, query bios and match heads/tracks?
 	ntfs_free(ntfs_boot);

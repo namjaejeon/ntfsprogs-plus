@@ -2755,6 +2755,8 @@ int main(int argc, char **argv)
 
 	option.verbose = 0;
 	opterr = 0;
+	option.flags = NTFS_MNT_FSCK;
+
 	while ((c = getopt_long(argc, argv, "aCnpryhvV", opts, NULL)) != EOF) {
 		switch (c) {
 		case 'a':
@@ -2771,7 +2773,7 @@ conflict_option:
 				exit(RETURN_USAGE_OR_SYNTAX_ERROR);
 			}
 
-			option.flags = NTFS_MNT_FS_AUTO_REPAIR;
+			option.flags |= NTFS_MNT_FS_AUTO_REPAIR;
 			break;
 		case 'C':	/* exclusive with others */
 			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
@@ -2781,6 +2783,7 @@ conflict_option:
 				goto conflict_option;
 			}
 
+			option.flags &= ~NTFS_MNT_FSCK;
 			check_dirty_only = TRUE;
 			break;
 		case 'n':
@@ -2791,7 +2794,7 @@ conflict_option:
 				goto conflict_option;
 			}
 
-			option.flags = NTFS_MNT_FS_NO_REPAIR | NTFS_MNT_RDONLY;
+			option.flags |= NTFS_MNT_FS_NO_REPAIR | NTFS_MNT_RDONLY;
 			break;
 		case 'r':
 			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
@@ -2801,7 +2804,7 @@ conflict_option:
 				goto conflict_option;
 			}
 
-			option.flags = NTFS_MNT_FS_ASK_REPAIR;
+			option.flags |= NTFS_MNT_FS_ASK_REPAIR;
 			break;
 		case 'y':
 			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
@@ -2811,7 +2814,7 @@ conflict_option:
 				goto conflict_option;
 			}
 
-			option.flags = NTFS_MNT_FS_YES_REPAIR;
+			option.flags |= NTFS_MNT_FS_YES_REPAIR;
 			break;
 		case 'h':
 			usage(0);
@@ -2830,7 +2833,6 @@ conflict_option:
 			usage(1);
 		}
 	}
-	option.flags |= NTFS_MNT_FSCK;
 
 	/* If not set fsck repair option, set default fsck flags to ASK mode. */
 	if (!(option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
