@@ -2755,7 +2755,7 @@ int main(int argc, char **argv)
 
 	option.verbose = 0;
 	opterr = 0;
-	while ((c = getopt_long(argc, argv, "aCnpyhvV", opts, NULL)) != EOF) {
+	while ((c = getopt_long(argc, argv, "aCnpryhvV", opts, NULL)) != EOF) {
 		switch (c) {
 		case 'a':
 		case 'p':
