@@ -90,7 +90,8 @@ extern int parse_errors;
 /* It is called when each fsck step end */
 #define fsck_end_step() \
 	do { \
-		parse_errors = (fsck_errors - fsck_fixes) - parse_errors; \
+		if ((fsck_errors - fsck_fixes) != parse_errors) \
+			parse_errors = (fsck_errors - fsck_fixes); \
 		if (parse_errors) \
 			ntfs_log_info("Parse #%d Errors remains: %d\n", \
 					parse_count - 1, parse_errors); \
