@@ -313,8 +313,8 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 			m->attrs_offset = cpu_to_le16(offset);
 			fixed = TRUE;
 			fsck_err_fixed();
-		}
-		goto err_out;
+		} else
+			goto err_out;
 	}
 
 	if (offset < min_offset) {
