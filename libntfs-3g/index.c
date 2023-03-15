@@ -578,6 +578,17 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (!ie)
 		return 0;
 
+	if (ie->length == 0 && ie->key_length == 0) {
+		check_failed("Index entry length is zero, It should be at least INDEX_ENTRY_HEADER(16) size");
+		if (ntfsck_ask_repair(vol)) {
+			ie->length = cpu_to_le16(sizeof(INDEX_ENTRY_HEADER));
+			ie->ie_flags = INDEX_ENTRY_END;
+			ret = 1;
+			fsck_err_fixed();
+		} else
+			return -1;
+	}
+
 	if (ie->ie_flags & INDEX_ENTRY_NODE && ictx) {
 		VCN vcn = ntfs_ie_get_vcn(ie);
 		s64 data_size = (vcn + 1) << ictx->vcn_size_bits;
