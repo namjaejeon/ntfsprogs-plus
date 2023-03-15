@@ -2439,7 +2439,8 @@ next_dir:
 					/* TODO: set flags */
 					ie_temp = ntfs_ie_dup_novcn(prev);
 					ret = ntfs_index_rm(ictx);
-					ntfs_ie_add(ictx, ie_temp);
+					if (!ret)
+						ntfs_ie_add(ictx, ie_temp);
 					free(ie_temp);
 				}
 
