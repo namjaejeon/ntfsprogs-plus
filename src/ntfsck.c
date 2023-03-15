@@ -671,6 +671,8 @@ stack_of:
 					(unsigned long long)ni->mft_no);
 
 delete_inodes:
+			err = 0;
+
 			if (ni) {
 				ntfsck_check_non_resident_cluster(ni, 0);
 				ntfsck_free_mft_records(vol, ni);
