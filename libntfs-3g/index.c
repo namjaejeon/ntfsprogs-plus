@@ -2299,8 +2299,10 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 					fsck_err_failed();
 					entry = NULL;
 				}
+			} else if (ret < 0) {
+				/* TODO: ret < 0, inconsistent entry remove */
+				entry = NULL;
 			}
-			/* TODO: ret < 0, inconsistent entry remove */
 
 			ictx->parent_pos[ictx->pindex] = 0;
 			ictx->parent_vcn[ictx->pindex] = vcn;
@@ -2442,7 +2444,8 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 				fsck_err_failed();
 				return NULL;
 			}
-		}
+		} else if (ret < 0)
+			return NULL;
 		flags = next->ie_flags;
 
 			/* walk down if it has a subnode */
@@ -2470,7 +2473,8 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 				fsck_err_failed();
 				next = (INDEX_ENTRY*)NULL;
 			}
-		}
+		} else if (ret < 0)
+			next = (INDEX_ENTRY *)NULL;
 	}
 	return (next);
 }
