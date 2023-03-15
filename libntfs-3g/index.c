@@ -589,6 +589,17 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 			return -1;
 	}
 
+	if (ie->length == cpu_to_le16(sizeof(INDEX_ENTRY_HEADER)) &&
+	    !ie->ie_flags) {
+		check_failed("Index entry is empty and there is no INDEX_ENTRY_END set in ie_flags");
+		if (ntfsck_ask_repair(vol)) {
+			ie->ie_flags = INDEX_ENTRY_END;
+			ret = 1;
+			fsck_err_fixed();
+		} else
+			return -1;
+	}
+
 	if (ie->ie_flags & INDEX_ENTRY_NODE && ictx) {
 		VCN vcn = ntfs_ie_get_vcn(ie);
 		s64 data_size = (vcn + 1) << ictx->vcn_size_bits;
