@@ -666,7 +666,7 @@ stack_of:
 			 * TODO: Add inode whose parent inode was deleted,
 			 *	 to root directory.
 			 */
-			ntfs_log_info("!! FOUND Deleted parent inode(%llu), inode(%llu)\n",
+			ntfs_log_verbose("!! FOUND Deleted parent inode(%llu), inode(%llu)\n",
 					(unsigned long long)MREF(parent_no),
 					(unsigned long long)ni->mft_no);
 
@@ -687,7 +687,7 @@ delete_inodes:
 					err = -EIO;
 					continue;
 				}
-				ntfs_log_info(" delete inode(%llu)\n",
+				ntfs_log_verbose("delete inode(%llu)\n",
 						(unsigned long long)ni->mft_no);
 
 				ntfsck_check_non_resident_cluster(ni, 0);
