@@ -2381,6 +2381,8 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				goto err_continue;
 			}
 			prev = next;
+		} else if (ret < 0) {
+			goto err_continue;
 		}
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
