@@ -2315,6 +2315,11 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 			 */
 			ictx->is_in_root = backup;
 			ictx->bad_index = TRUE;
+			if (ictx->is_in_root == TRUE && ictx->ib) {
+				free(ictx->ib);
+				ictx->ib = NULL;
+			}
+
 			ictx->pindex--;
 		}
 	}
@@ -2341,6 +2346,11 @@ INDEX_ENTRY *ntfs_index_walk_up(INDEX_ENTRY *ie,
 			if (!ictx->pindex) {
 
 					/* we have reached the root */
+
+				if (ictx->prev_ib && ictx->prev_ib != ictx->ib) {
+					free(ictx->prev_ib);
+					ictx->prev_ib = NULL;
+				}
 
 				free(ictx->ib);
 				ictx->ib = (INDEX_BLOCK*)NULL;
