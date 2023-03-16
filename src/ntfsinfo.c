@@ -88,6 +88,7 @@ static struct options {
 	const char *device;	/* Device/File to work with */
 	const char *filename;	/* Resolve this filename to mft number */
 	s64	 inode;		/* Info for this inode */
+	s64	 extent_inode;	/* Info for this extent inode */
 	int	 quiet;		/* Less output */
 	int	 verbose;	/* Extra output */
 	int	 force;		/* Override common sense */
@@ -159,11 +160,12 @@ static void usage(void)
  */
 static int parse_options(int argc, char *argv[])
 {
-	static const char *sopt = "-:dfhi:F:mqtTvV";
+	static const char *sopt = "-:de:fhi:F:mqtTvV";
 	static const struct option lopt[] = {
 		{ "force",	 no_argument,		NULL, 'f' },
 		{ "help",	 no_argument,		NULL, 'h' },
 		{ "inode",	 required_argument,	NULL, 'i' },
+		{ "extent",	 required_argument,	NULL, 'e' },
 		{ "file",	 required_argument,	NULL, 'F' },
 		{ "quiet",	 no_argument,		NULL, 'q' },
 		{ "verbose",	 no_argument,		NULL, 'v' },
@@ -182,6 +184,7 @@ static int parse_options(int argc, char *argv[])
 	opterr = 0; /* We'll handle the errors, thank you. */
 
 	opts.inode = -1;
+	opts.extent_inode = -1;
 	opts.filename = NULL;
 
 	while ((c = getopt_long(argc, argv, sopt, lopt, NULL)) != -1) {
@@ -195,6 +198,13 @@ static int parse_options(int argc, char *argv[])
 		case 'i':
 			if ((opts.inode != -1) ||
 			    (!utils_parse_size(optarg, &opts.inode, FALSE))) {
+				err++;
+			}
+			break;
+		case 'e':
+			if ((opts.extent_inode != -1) ||
+			    (!utils_parse_size(optarg,
+					       &opts.extent_inode, FALSE))) {
 				err++;
 			}
 			break;
@@ -2507,8 +2517,28 @@ int main(int argc, char **argv)
 			inode = ntfs_inode_open(vol, MK_MREF(opts.inode, 0));
 		}
 
+		if (opts.extent_inode != -1) {
+			int i;
+
+			if (ntfs_inode_attach_all_extents(inode)) {
+				ntfs_log_perror("Error loading extent nodes");
+				goto out;
+			}
+
+			for (i = 0; i < inode->nr_extents; i++) {
+				if (inode->extent_nis[i]->mft_no ==
+				    opts.extent_inode) {
+					inode = inode->extent_nis[i];
+					goto found;
+				}
+			}
+
+			ntfs_log_perror("Failed to find extent node");
+		}
+
 		/* dump the inode information */
 		if (inode) {
+found:
 			/* general info about the inode's mft record */
 			ntfs_dump_inode_general_info(inode);
 			/* dump attributes */
@@ -2523,7 +2553,7 @@ int main(int argc, char **argv)
 			ntfs_log_perror("Error loading node");
 		}
 	}
-
+out:
 	ntfs_umount(vol, FALSE);
 	return 0;
 }
