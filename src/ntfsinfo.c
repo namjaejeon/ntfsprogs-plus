@@ -798,6 +798,11 @@ static void ntfs_dump_attr_list(ATTR_RECORD *attr, ntfs_volume *vol)
 				MREF_LE(entry->mft_reference),
 				(unsigned long long)
 				MREF_LE(entry->mft_reference));
+		printf("\t\tMFT sequence:\t%lld (0x%llx)\n",
+				(unsigned long long)
+				MSEQNO_LE(entry->mft_reference),
+				(unsigned long long)
+				MSEQNO_LE(entry->mft_reference));
 		printf("\t\tInstance:\t%u (0x%x)\n",
 				(unsigned)le16_to_cpu(entry->instance),
 				(unsigned)le16_to_cpu(entry->instance));
