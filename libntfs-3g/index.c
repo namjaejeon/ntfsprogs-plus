@@ -2292,7 +2292,8 @@ INDEX_ENTRY *ntfs_index_walk_down(INDEX_ENTRY *ie,
 			ictx->entry = ntfs_ie_get_first(&ictx->ib->index);
 			entry = ictx->entry;
 			ret = ntfs_index_entry_inconsistent(ictx->ni->vol, entry,
-					ictx->ir->collation_rule, 0, ictx);
+					ictx->ir->collation_rule, ictx->ni->mft_no,
+					ictx);
 			if (ret > 0) {
 				ret = ntfsck_update_index_entry(ictx);
 				if (ret) {
@@ -2437,7 +2438,8 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 		next = (INDEX_ENTRY*)((char*)ie + le16_to_cpu(ie->length));
 		++ictx->parent_pos[ictx->pindex];
 
-		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
+		ret = ntfs_index_entry_inconsistent(vol, next, cr,
+				ictx->ni->mft_no, ictx);
 		if (ret > 0) {
 			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
@@ -2466,7 +2468,8 @@ INDEX_ENTRY *ntfs_index_next(INDEX_ENTRY *ie, ntfs_index_context *ictx)
 	if (next && (next->ie_flags & INDEX_ENTRY_END))
 		next = (INDEX_ENTRY*)NULL;
 	else {
-		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
+		ret = ntfs_index_entry_inconsistent(vol, next, cr,
+				ictx->ni->mft_no, ictx);
 		if (ret > 0) {
 			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
