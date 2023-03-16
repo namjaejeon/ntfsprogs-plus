@@ -532,7 +532,7 @@ static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 				(unsigned long long)ni->mft_no);
 }
 
-/* only called from repairing orphaned file */
+/* only called from repairing orphaned file in auto fsck mode */
 static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 		FILE_NAME_ATTR *fn)
 {
@@ -675,6 +675,11 @@ stack_of:
 delete_inodes:
 			err = 0;
 
+			if (parent_ni) {
+				ntfs_inode_close(parent_ni);
+				parent_ni = NULL;
+			}
+
 			if (ni) {
 				ntfsck_check_non_resident_cluster(ni, 0);
 				ntfsck_free_mft_records(vol, ni);
@@ -776,7 +781,7 @@ delete_inodes:
 
 			/* check again after adding $FN to index */
 			ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
-			if (ret == STATUS_ERROR || ret == STATUS_NOT_FOUND) {
+			if (ret != STATUS_OK) {
 				err = -EIO;
 				ni = NULL;
 				goto delete_inodes;
