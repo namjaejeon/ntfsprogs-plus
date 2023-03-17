@@ -2,6 +2,8 @@
  * ntfsck - Part of the Linux-NTFS project.
  *
  * Copyright (c) 2006 Yuval Fledel
+ * Copyright (c) 2023 LG Electronics Inc.
+ * Author(s): Namjae Jeon, JaeHoon Sim
  *
  * This utility will check and fix errors on an NTFS volume.
  *
