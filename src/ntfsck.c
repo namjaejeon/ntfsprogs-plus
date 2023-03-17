@@ -2380,8 +2380,10 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			next = ntfs_index_walk_down(next, ictx);
-			if (!next)
+			if (!next) {
+				ntfsck_initialize_index_attr(dir->ni);
 				goto next_dir;
+			}
 		}
 
 		if (!(next->ie_flags & INDEX_ENTRY_END))
