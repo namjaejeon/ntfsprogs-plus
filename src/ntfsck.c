@@ -2539,6 +2539,12 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 		ntfsck_verify_mft_record(vol, mft_num);
 	}
 
+	/*
+	 * $MFT could be updated after reviving orphaned mft entries.
+	 * We need to update lcn bitmap for $MFT at last again.
+	 */
+	ntfsck_update_lcn_bitmap(vol->mft_ni);
+
 	fsck_end_step();
 }
 
