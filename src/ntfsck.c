@@ -641,10 +641,6 @@ stack_of:
 
 		parent_no = le64_to_cpu(fn->parent_directory);
 
-		/* skip if parent is system file */
-		if (MREF(parent_no) < FILE_first_user)
-			goto delete_inodes;
-
 		/*
 		 * Consider that the parent could be orphaned.
 		 */
@@ -773,23 +769,18 @@ delete_inodes:
 			 */
 			ntfsck_update_lcn_bitmap(parent_ni);
 
+
 		} /* if (parent_ni) */
 
 next_item:
-		if (ctx) {
+		if (ctx)
 			ntfs_attr_put_search_ctx(ctx);
-			ctx = NULL;
-		}
 
-		if (parent_ni) {
+		if (parent_ni)
 			ntfs_inode_close(parent_ni);
-			parent_ni = NULL;
-		}
 
-		if (ni) {
+		if (ni)
 			ntfs_inode_close(ni);
-			ni = NULL;
-		}
 
 		ntfs_list_del(&of->list);
 		free(of);
@@ -2274,7 +2265,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	struct dir *dir;
 	INDEX_ROOT *ir;
 	INDEX_ENTRY *next;
-	INDEX_ENTRY *prev;
 	ntfs_attr_search_ctx *ctx = NULL;
 	ntfs_index_context *ictx = NULL;
 	ntfs_attr *bm_na = NULL;
@@ -2308,21 +2298,22 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		ctx = ntfs_attr_get_search_ctx(dir->ni, NULL);
 		if (!ctx)
-			goto err_continue;
+			goto next_dir;
 
 		/* Find the index root attribute in the mft record. */
 		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
 					0, ctx)) {
 			ntfs_log_perror("Index root attribute missing in directory inode "
 					"%lld", (unsigned long long)dir->ni->mft_no);
+			/* continue ?? */
 			ntfs_attr_put_search_ctx(ctx);
-			goto err_continue;
+			goto next_dir;
 		}
 
 		ictx = ntfs_index_ctx_get(dir->ni, NTFS_INDEX_I30, 4);
 		if (!ictx) {
 			ntfs_attr_put_search_ctx(ctx);
-			goto err_continue;
+			goto next_dir;
 		}
 
 		/* Get to the index root value. */
@@ -2341,7 +2332,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		if (ictx->block_size < NTFS_BLOCK_SIZE) {
 			ntfs_log_perror("Index block size (%d) is smaller than the "
 					"sector size (%d)", ictx->block_size, NTFS_BLOCK_SIZE);
-			goto err_continue;
+			goto next_dir;
 		}
 
 		if (vol->cluster_size <= ictx->block_size)
@@ -2360,7 +2351,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			if (!ictx->ia_na) {
 				ntfs_log_perror("Failed to open index allocation of inode "
 						"%llu", (unsigned long long)dir->ni->mft_no);
-				goto err_continue;
+				goto next_dir;
 			}
 
 			/* read $BITMAP */
@@ -2371,22 +2362,20 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				if (!dir->ni->fsck_ibm) {
 					ntfs_log_perror("Failed to allocate memory\n");
 					ntfs_attr_put_search_ctx(ctx);
-					goto err_continue;
+					goto next_dir;
 				}
 			}
 		}
-		prev = next;
 
 		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
 		if (ret > 0) {
 			ret = ntfsck_update_index_entry(ictx);
 			if (ret) {
 				fsck_err_failed();
-				goto err_continue;
+				goto next_dir;
 			}
-			prev = next;
 		} else if (ret < 0) {
-			goto err_continue;
+			goto next_dir;
 		}
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
@@ -2400,7 +2389,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
 check_index:
-			prev = next;
 			ret = ntfsck_check_index(vol, next, ictx);
 			if (ret) {
 				next = ictx->entry;
@@ -2415,59 +2403,10 @@ check_index:
 				ntfsck_set_index_bitmap(dir->ni, ictx, bm_na->allocated_size);
 		}
 
-next_dir:
-		if (!next && ictx->bad_index == TRUE) {
-			INDEX_ENTRY *ie_temp;
-			INDEX_HEADER *ih;
-
-			check_failed("Index block is corrupted. inode(%llu)",
-					(unsigned long long)dir->ni->mft_no);
-
-			if (ntfsck_ask_repair(vol)) {
-				ictx->entry = prev;	/* set previous entry */
-				prev->ie_flags &= ~INDEX_ENTRY_NODE;
-				prev->length = cpu_to_le16(le16_to_cpu(prev->length) - 8);
-
-				/* ntfs_ie_end() */
-				if (prev->ie_flags & INDEX_ENTRY_END || !prev->length) {
-					if (ictx->parent_vcn[ictx->pindex] == VCN_INDEX_ROOT_PARENT) {
-						ih = &ictx->ir->index;
-						if (ntfs_ih_zero_entry(ih)) {
-							ntfs_attr_truncate(ictx->ia_na, 0);
-							ih->ih_flags = SMALL_INDEX;
-						}
-					}
-				} else {
-					/* TODO: set flags */
-					ie_temp = ntfs_ie_dup_novcn(prev);
-					ret = ntfs_index_rm(ictx);
-					if (!ret)
-						ntfs_ie_add(ictx, ie_temp);
-					free(ie_temp);
-				}
-
-				if (ictx->parent_vcn[ictx->pindex] == VCN_INDEX_ROOT_PARENT)
-					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
-				else
-					if (ntfs_ib_write(ictx, ictx->prev_ib))
-						goto err_continue;
-
-				/* set ictx field to free in ntfs_index_ctx_put() */
-				ictx->entry = NULL;
-				ictx->bad_index = FALSE;
-
-				if (ictx->prev_ib && ictx->prev_ib != ictx->ib)
-					free(ictx->prev_ib);
-
-				ictx->prev_ib = NULL;
-				fsck_err_fixed();
-			}
-		}
-
 		/* compare index allocation bitmap between disk & fsck */
 		if (bm_na) {
 			if (ntfsck_check_index_bitmap(dir->ni, bm_na))
-				goto err_continue;
+				goto next_dir;
 
 			if (dir->ni->fsck_ibm) {
 				free(dir->ni->fsck_ibm);
@@ -2475,7 +2414,7 @@ next_dir:
 			}
 		}
 
-err_continue:
+next_dir:
 		if (bm_na) {
 			ntfs_attr_close(bm_na);
 			bm_na = NULL;

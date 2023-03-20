@@ -71,14 +71,13 @@ typedef int (*COLLATE)(ntfs_volume *vol, const void *data1, int len1,
  * @ni:			inode containing the @entry described by this context
  * @name:		name of the index described by this context
  * @name_len:		length of the index name
- * @entry:		index entry (points into @ir or @ib)
+ * @entry:		index entry (points into @ir or @ia)
  * @data:		index entry data (points into @entry)
  * @data_len:		length in bytes of @data
- * @is_in_root:		TRUE if @entry is in @ir or FALSE if it is in @ib
+ * @is_in_root:		TRUE if @entry is in @ir or FALSE if it is in @ia
  * @ir:			index root if @is_in_root or NULL otherwise
  * @actx:		attribute search context if in root or NULL otherwise
- * @ib:			index block if @is_in_root is FALSE or NULL otherwise
- * @prev_ib:		to retain previous index block if new index block read to @ib
+ * @ia:			index block if @is_in_root is FALSE or NULL otherwise
  * @ia_na:		opened INDEX_ALLOCATION attribute
  * @parent_pos:		parent entries' positions in the index block
  * @parent_vcn:		entry's parent node or VCN_INDEX_ROOT_PARENT
@@ -125,7 +124,6 @@ typedef struct {
 	INDEX_ROOT *ir;
 	ntfs_attr_search_ctx *actx;
 	INDEX_BLOCK *ib;
-	INDEX_BLOCK *prev_ib;		/* for fsck, retain previous block */
 	ntfs_attr *ia_na;
 	int parent_pos[MAX_PARENT_VCN];  /* parent entries' positions */
 	VCN parent_vcn[MAX_PARENT_VCN]; /* entry's parent nodes */
@@ -174,10 +172,6 @@ extern void ntfs_ih_filename_dump(INDEX_HEADER *ih);
 /* the following was added by JPA for use in security.c */
 extern int ntfs_ie_add(ntfs_index_context *icx, INDEX_ENTRY *ie);
 extern int ntfs_index_rm(ntfs_index_context *icx);
-
-extern int ntfs_ih_one_entry(INDEX_HEADER *ih);
-extern int ntfs_ih_zero_entry(INDEX_HEADER *ih);
-extern INDEX_ENTRY *ntfs_ie_dup_novcn(INDEX_ENTRY *ie);
 
 int ntfs_ib_write(ntfs_index_context *icx, INDEX_BLOCK *ib);
 int ntfsck_update_index_entry(ntfs_index_context *ictx);
