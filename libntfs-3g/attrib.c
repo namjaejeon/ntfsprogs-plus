@@ -3355,6 +3355,8 @@ do_next_attr_loop:
 			break;
 		if ((space >= 4) && (a->type == AT_END))
 			continue;
+		if (!a->length)
+			break;
 		if ((space < (ptrdiff_t)offsetof(ATTR_RECORD, resident_end))
 		    || (space < (ptrdiff_t)le32_to_cpu(a->length)))
 			break;
