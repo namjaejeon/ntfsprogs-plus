@@ -1609,26 +1609,6 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 	ntfs_attr_close(ir_na);
 	ir_na = NULL;
 
-	ret = STATUS_ERROR;	/* initialize return code */
-
-	/*
-	 * Recreate both $BITMAP attr and $IA attr.
-	 * All entries in this directory will be
-	 * orphaned and they will be revived when
-	 * checking orphaned entries under parse.
-	 */
-	memset(bmp, 0, sizeof(bmp));
-	if (ntfs_attr_add(ni, AT_BITMAP, NTFS_INDEX_I30, 4,
-				bmp, sizeof(bmp))) {
-		ntfs_log_perror("Failed to add AT_BITMAP");
-		goto out;
-	}
-
-	if (ntfs_attr_add(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4,
-				NULL, 0)) {
-		ntfs_log_perror("Failed to add AT_INDEX_ALLOCATION");
-		goto out;
-	}
 	ntfs_inode_mark_dirty(ni);
 
 	ret = STATUS_OK;
