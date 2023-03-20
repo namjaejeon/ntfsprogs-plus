@@ -726,6 +726,24 @@ delete_inodes:
 			if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 				ntfsck_initialize_index_attr(ni);
 
+				/*
+				 * fn pointer could be changed to invalid place after
+				 * resetting $IR and $IA. Re-lookup $FILE_NAME.
+				 */
+				ntfs_attr_reinit_search_ctx(ctx);
+				err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+						CASE_SENSITIVE, 0, NULL, 0, ctx);
+				if (err) {
+					/* $FILE_NAME lookup failed */
+					ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%llu)\n",
+							(unsigned long long)ni->mft_no);
+					err = 0;
+					goto delete_inodes;
+				}
+
+				fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+						le16_to_cpu(ctx->attr->value_offset));
+
 				fn->allocated_size = 0;
 				fn->data_size = 0;
 				ni->allocated_size = 0;
