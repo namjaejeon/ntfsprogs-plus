@@ -201,7 +201,7 @@ static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 static int ntfsck_check_directory(ntfs_inode *ni);
 static int ntfsck_check_file(ntfs_inode *ni);
 static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
-		struct rl_size *rls);
+		struct rl_size *rls, BOOL lcnbmp_set);
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
 static int ntfsck_initialize_index_attr(ntfs_inode *ni);
@@ -419,7 +419,7 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
  *	  real allocated size. it may be NULL, don't return calculated size.
  */
 static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
-		struct rl_size *rls)
+		struct rl_size *rls, BOOL lcnbmp_set)
 {
 	ntfs_volume *vol;
 	s64 rl_asize = 0;	/* rl allocated size (including HOLE length) */
@@ -439,8 +439,8 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 					"vcn(%ld), lcn(%ld), length(%ld)\n",
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
-
-			ntfsck_set_lcnbmp_range(rl[i].lcn, rl[i].length, set_bit);
+			if (lcnbmp_set)
+				ntfsck_set_lcnbmp_range(rl[i].lcn, rl[i].length, set_bit);
 
 			if (set_bit == 0)
 				ntfs_cluster_free_basic(vol, rl[i].lcn, rl[i].length);
@@ -501,7 +501,7 @@ static void ntfsck_check_non_resident_cluster(ntfs_inode *ni, u8 set_bit)
 			continue;
 		}
 
-		if (ntfsck_setbit_runlist(ni, rl, set_bit, NULL)) {
+		if (ntfsck_setbit_runlist(ni, rl, set_bit, NULL, TRUE)) {
 			ntfs_log_error("Failed to check and setbit runlist. "
 					"Leaving inconsistent metadata.\n");
 			/* continue */
@@ -1663,7 +1663,7 @@ static int ntfsck_check_attr_runlist(ntfs_attr *na, struct rl_size *rls,
 
 	na->rl = rl;
 
-	ret = ntfsck_setbit_runlist(na->ni, na->rl, 1, rls);
+	ret = ntfsck_setbit_runlist(na->ni, na->rl, 1, rls, FALSE);
 	if (ret)
 		return STATUS_ERROR;
 
