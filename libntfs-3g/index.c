@@ -482,32 +482,21 @@ int ntfs_index_block_inconsistent(ntfs_volume *vol, ntfs_attr *ia_na,
 	}
 	
 	if (sle64_to_cpu(ib->index_block_vcn) != vcn) {
-		check_failed("Corrupt index block: VCN (%lld) is different "
-			       "from expected VCN (%lld) in inode %llu",
+		ntfs_log_error("Corrupt index block: VCN (%lld) is different "
+			       "from expected VCN (%lld) in inode %llu\n",
 			       (long long)sle64_to_cpu(ib->index_block_vcn),
 			       (long long)vcn,
 			       (unsigned long long)inum);
-		if (ntfsck_ask_repair(vol)) {
-			ib->index_block_vcn = cpu_to_sle64(vcn);
-			fixed = TRUE;
-			fsck_err_fixed();
-		} else
-			return -1;
+		return -1;
 	}
 	
 	if (ib_size != block_size) {
-		check_failed("Corrupt index block : VCN (%lld) of inode %llu "
+		ntfs_log_error("Corrupt index block : VCN (%lld) of inode %llu "
 			       "has a size (%u) differing from the index "
-			       "specified size (%u)", (long long)vcn,
+			       "specified size (%u)\n", (long long)vcn,
 			       (unsigned long long)inum, ib_size,
 			       (unsigned int)block_size);
-		if (ntfsck_ask_repair(vol)) {
-			ib->index.allocated_size = cpu_to_le32(block_size -
-				offsetof(INDEX_BLOCK, index));
-			fixed = TRUE;
-			fsck_err_fixed();
-		} else
-			return -1;
+		return -1;
 	}
 	if (le32_to_cpu(ib->index.entries_offset) < sizeof(INDEX_HEADER)) {
 		ntfs_log_error("Invalid index entry offset in inode %lld\n",
