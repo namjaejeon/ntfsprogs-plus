@@ -2131,6 +2131,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			}
 		} else {
 			/* for inode whose parent inode is system files */
+			ntfs_inode_attach_all_extents(ni);
 			ntfsck_set_mft_record_bitmap(ni);
 		}
 
