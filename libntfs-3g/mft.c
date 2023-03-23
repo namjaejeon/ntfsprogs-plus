@@ -321,7 +321,6 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		ntfs_log_error("MFT record(%llu)'s attribute start offset "
 				"is corrupted\n",
 				(unsigned long long)MREF(mref));
-		fsck_err_found();
 		goto err_out;
 	}
 
