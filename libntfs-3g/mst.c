@@ -84,6 +84,7 @@ int ntfs_mst_post_read_fixup_warn(NTFS_RECORD *b, const u32 size,
 					(long)size, (int)usa_ofs,
 					(unsigned int)usa_count);
 		}
+		b->magic = magic_BAAD;
 		return -1;
 	}
 	/* Position of usn in update sequence array. */
