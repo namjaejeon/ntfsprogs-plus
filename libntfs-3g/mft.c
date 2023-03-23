@@ -244,7 +244,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 
 	/* check magic number of mft */
 	if (!ntfs_is_file_record(m->magic)) {
-		if (NVolFsck(vol)) {
+		if (NVolFsck(vol) && m->magic != magic_BAAD) {
 			check_failed("Record %llu has no FILE magic (0x%x)",
 					(unsigned long long)MREF(mref),
 					(int)le32_to_cpu(*(le32 *)m));
@@ -255,10 +255,12 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 				fsck_err_fixed();
 			} else
 				goto err_out;
-		} else if (!NVolNoFixupWarn(vol))
+		} else if (!NVolNoFixupWarn(vol)) {
 			ntfs_log_error("Record %llu has no FILE magic (0x%x)\n",
 				(unsigned long long)MREF(mref),
 				(int)le32_to_cpu(*(le32*)m));
+			goto err_out;
+		}
 	}
 
 	/* check allocated size */
@@ -279,6 +281,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 				       "(%u <> %u)\n", (unsigned long long)MREF(mref),
 				       vol->mft_record_size,
 				       le32_to_cpu(m->bytes_allocated));
+			goto err_out;
 		}
 	}
 
