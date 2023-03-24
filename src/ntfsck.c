@@ -2883,8 +2883,13 @@ conflict_option:
 		 * but not use now, just return RETURN_OPERATIONAL_ERROR
 		 * like ext4 filesystem.
 		 */
-		if (errno == EOPNOTSUPP)
+		if (errno == EOPNOTSUPP) {
+			ntfs_log_error("The superblock does not describe a valid NTFS.\n");
 			exit(RETURN_OPERATIONAL_ERROR);
+		}
+
+		ntfs_log_error("ntfsck mount failed, errno : %d\n", errno);
+		fsck_err_found();
 		goto err_out;
 	}
 
