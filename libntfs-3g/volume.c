@@ -283,11 +283,9 @@ static int ntfs_mft_load(ntfs_volume *vol)
 		goto error_exit;
 	}
 
-	if (!NVolFsck(vol)) {
-		if (ntfs_mft_record_check(vol, 0, mb))
-			goto error_exit;
-	}
-	
+	if (ntfs_mft_record_check(vol, 0, mb))
+		goto error_exit;
+
 	ctx = ntfs_attr_get_search_ctx(vol->mft_ni, NULL);
 	if (!ctx)
 		goto error_exit;
@@ -640,6 +638,42 @@ out:
 	return 0;
 }
 
+static int ntfs_recover_mft(ntfs_volume *vol, const MFT_REF mref)
+{
+	MFT_RECORD *mrec;
+	int err = 0;
+
+	mrec = ntfs_malloc(vol->mft_record_size);
+	if (!mrec)
+		return -ENOMEM;
+
+	if (ntfs_mst_pread(vol->dev,
+			   (vol->mftmirr_lcn << vol->cluster_size_bits) +
+				mref * vol->mft_record_size,
+			   1, vol->mft_record_size, mrec) != 1) {
+		err = -EIO;
+		goto err_out;
+	}
+
+	if (ntfs_mft_record_check(vol, mref, mrec)) {
+		err = -EIO;
+		goto err_out;
+	}
+
+	if (ntfs_mst_pwrite(vol->dev,
+			(vol->mft_lcn << vol->cluster_size_bits) +
+			mref * vol->mft_record_size, 1,
+			vol->mft_record_size, mrec) != 1) {
+		ntfs_log_perror("Error correcting $MFT record");
+		err = -EIO;
+		goto err_out;
+	}
+
+err_out:
+	ntfs_free(mrec);
+	return err;
+}
+
 /**
  * ntfs_volume_startup - allocate and setup an ntfs volume
  * @dev:	device to open
@@ -658,6 +692,7 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	LCN mft_zone_size, mft_lcn;
 	ntfs_volume *vol;
 	int eo;
+	BOOL try_recover_mft = FALSE;
 
 	if (!dev || !dev->d_ops || !dev->d_name) {
 		errno = EINVAL;
@@ -793,15 +828,40 @@ ntfs_volume *ntfs_volume_startup(struct ntfs_device *dev,
 	 * The cluster allocator is now fully operational.
 	 */
 
+reload_mft:
 	/* Need to setup $MFT so we can use the library read functions. */
 	if (ntfs_mft_load(vol) < 0) {
-		ntfs_log_perror("Failed to load $MFT");
+		if (try_recover_mft == FALSE) {
+			check_failed("Failed to load $MFT, Fix");
+			if (ntfsck_ask_repair(vol)) {
+				if (!ntfs_recover_mft(vol, 0)) {
+					ntfs_log_error("Try to reload $MFT after updating it using $MFTMirr\n");
+					try_recover_mft = TRUE;
+					fsck_err_fixed();
+					goto reload_mft;
+				}
+			}
+		} else
+			ntfs_log_perror("Failed to load $MFT");
 		goto error_exit;
 	}
 
+	try_recover_mft = FALSE;
+reload_mft_mirr:
 	/* Need to setup $MFTMirr so we can use the write functions, too. */
 	if (ntfs_mftmirr_load(vol) < 0) {
-		ntfs_log_perror("Failed to load $MFTMirr");
+		if (try_recover_mft == FALSE) {
+			check_failed("Failed to load $MFTMirr, Fix");
+			if (ntfsck_ask_repair(vol)) {
+				if (!ntfs_recover_mft(vol, 1)) {
+					ntfs_log_error("Try to reload $MFTMirr after updating it using $MFT\n");
+					try_recover_mft = TRUE;
+					fsck_err_fixed();
+					goto reload_mft_mirr;
+				}
+			}
+		} else
+			ntfs_log_perror("Failed to load $MFTMirr");
 		goto error_exit;
 	}
 	return vol;
