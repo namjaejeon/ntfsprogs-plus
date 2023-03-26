@@ -332,7 +332,6 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	if (p2n(a) < p2n(m) || (char *)a > (char *)m + vol->mft_record_size) {
 		ntfs_log_error("Record %llu is corrupt\n",
 			       (unsigned long long)MREF(mref));
-		fsck_err_found();
 		goto err_out;
 	}
 
