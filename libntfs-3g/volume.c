@@ -349,7 +349,15 @@ mft_has_no_attr_list:
 		goto error_exit;
 	
 	/* We now have a fully setup ntfs inode for $MFT in vol->mft_ni. */
-	
+
+	ntfs_attr_reinit_search_ctx(ctx);
+	/* Check if there is $FN attribute in $MFT. */
+	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED,
+				0, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+		ntfs_log_perror("No FILE_NAME in $MFT record\n");
+		goto error_exit;
+	}
+
 	/* Get an ntfs attribute for $MFT/$DATA and set it up, too. */
 	vol->mft_na = ntfs_attr_open(vol->mft_ni, AT_DATA, AT_UNNAMED, 0);
 	if (!vol->mft_na) {
