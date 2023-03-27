@@ -286,6 +286,11 @@ static int ntfs_mft_load(ntfs_volume *vol)
 	if (ntfs_mft_record_check(vol, 0, mb))
 		goto error_exit;
 
+	if (mb->flags != MFT_RECORD_IN_USE) {
+		errno = ENOENT;
+		goto error_exit;
+	}
+
 	ctx = ntfs_attr_get_search_ctx(vol->mft_ni, NULL);
 	if (!ctx)
 		goto error_exit;
@@ -457,6 +462,11 @@ static int ntfs_mftmirr_load(ntfs_volume *vol)
 	if (!vol->mftmirr_ni) {
 		ntfs_log_perror("Failed to open inode $MFTMirr");
 		return -1;
+	}
+
+	if (vol->mftmirr_ni->mrec->flags != MFT_RECORD_IN_USE) {
+		errno = ENOENT;
+		goto error_exit;
 	}
 	
 	vol->mftmirr_na = ntfs_attr_open(vol->mftmirr_ni, AT_DATA, AT_UNNAMED, 0);
