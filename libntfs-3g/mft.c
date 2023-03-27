@@ -341,7 +341,7 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 		goto err_out;
 	}
 
-	if (NVolFsck(vol)) {
+	if (!NVolNoFixupWarn(vol)) {
 		space = vol->mft_record_size - offset;
 		a = (ATTR_RECORD*)((char*)m + offset);
 

@@ -3466,7 +3466,7 @@ not_found:
  *	Returns 0 and dirty flag set 1, if the repairing is OK
  */
 
-int ntfs_attr_inconsistent(const ntfs_volume *vol, ATTR_RECORD *a,
+int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 	const MFT_REF mref, BOOL *fixed)
 {
 	FILE_NAME_ATTR *fn;
@@ -3474,6 +3474,9 @@ int ntfs_attr_inconsistent(const ntfs_volume *vol, ATTR_RECORD *a,
 	ATTR_RECORD *mod_a = (ATTR_RECORD *)a;
 	u64 inum;
 	int ret;
+
+	if (mref <= FILE_MFTMirr)
+		NVolClearFsck(vol);
 
 	/*
 	 * The attribute was found to fully lie within the MFT
@@ -3504,6 +3507,7 @@ int ntfs_attr_inconsistent(const ntfs_volume *vol, ATTR_RECORD *a,
 				(long long)inum);
 			errno = EIO;
 			ret = -1;
+			goto out;
 		}
 	} else {
 		u32 attr_len = le32_to_cpu(a->length);
@@ -3518,62 +3522,99 @@ int ntfs_attr_inconsistent(const ntfs_volume *vol, ATTR_RECORD *a,
 				(long long)inum);
 			errno = EIO;
 			ret = -1;
+			goto out;
 		}
 
 		if (value_off & 7) {
-			check_failed("Value offset badly aligned in attribute(type : 0x%x)",
-					a->type);
-			if (ntfsck_ask_repair(vol)) {
-				value_off += 7 & ~7;
-				a->value_offset = cpu_to_le16(value_off);
-				*fixed = TRUE;
-				fsck_err_fixed();
+			if (NVolFsck(vol)) {
+				check_failed("Value offset badly aligned in attribute(type : 0x%x)",
+					     a->type);
+				if (ntfsck_ask_repair(vol)) {
+					value_off += 7 & ~7;
+					a->value_offset = cpu_to_le16(value_off);
+					*fixed = TRUE;
+					fsck_err_fixed();
+				} else {
+					errno = EIO;
+					ret = -1;
+					goto out;
+				}
 			} else {
+				ntfs_log_error("Value offset badly aligned in attribute(type : 0x%x)",
+					       a->type);
 				errno = EIO;
 				ret = -1;
+				goto out;
 			}
 		}
 
 		if (a->name_offset && (u32)le16_to_cpu(a->name_offset) <
 		    offsetof(ATTR_RECORD, resident_end)) {
-			check_failed("Name offset is corrupted in attribute(type : 0x%x)",
-					a->type);
-			if (ntfsck_ask_repair(vol)) {
-				a->name_offset = cpu_to_le16(offsetof(ATTR_RECORD, resident_end));
-				*fixed = TRUE;
-				fsck_err_fixed();
+			if (NVolFsck(vol)) {
+				check_failed("Name offset is corrupted in attribute(type : 0x%x)",
+					     a->type);
+				if (ntfsck_ask_repair(vol)) {
+					a->name_offset = cpu_to_le16(offsetof(ATTR_RECORD, resident_end));
+					*fixed = TRUE;
+					fsck_err_fixed();
+				} else {
+					ntfs_log_error("Name offset is corrupted in attribute(type : 0x%x)",
+						       a->type);
+					errno = EIO;
+					ret = -1;
+					goto out;
+				}
 			} else {
 				errno = EIO;
 				ret = -1;
+				goto out;
 			}
 		}
 
 		if (name_end > value_off) {
-			check_failed("Value offset is corrupted in attribute(type : 0x%x)",
-					a->type);
-			if (ntfsck_ask_repair(vol)) {
-				value_off = name_end;
-				a->value_offset = cpu_to_le16(value_off);
-				*fixed = TRUE;
-				fsck_err_fixed();
+			if (NVolFsck(vol)) {
+				check_failed("Value offset is corrupted in attribute(type : 0x%x)",
+					     a->type);
+				if (ntfsck_ask_repair(vol)) {
+					value_off = name_end;
+					a->value_offset = cpu_to_le16(value_off);
+					*fixed = TRUE;
+					fsck_err_fixed();
+				} else {
+					errno = EIO;
+					ret = -1;
+					goto out;
+				}
 			} else {
+				ntfs_log_error("Value offset is corrupted in attribute(type : 0x%x)\n",
+					     a->type);
 				errno = EIO;
 				ret = -1;
+				goto out;
 			}
 		}
 
 		if (((value_off + value_len + 7) & ~7) > attr_len ||
 		    attr_len < offsetof(ATTR_RECORD, resident_end)) {
-			check_failed("Attribute length is corrupted in attribute(type : 0x%x)",
-					a->type);
-			if (ntfsck_ask_repair(vol)) {
-				attr_len = (value_off + value_len + 7) & ~7;
-				a->length = cpu_to_le32(attr_len);
-				*fixed = TRUE;
-				fsck_err_fixed();
+			if (NVolFsck(vol)) {
+				check_failed("Attribute length is corrupted in attribute(type : 0x%x)",
+					     a->type);
+				if (ntfsck_ask_repair(vol)) {
+					attr_len = (value_off + value_len + 7) & ~7;
+					a->length = cpu_to_le32(attr_len);
+					*fixed = TRUE;
+					fsck_err_fixed();
+				} else {
+					errno = EIO;
+					ret = -1;
+					goto out;
+				}
 			} else {
+				ntfs_log_error("Attribute length is corrupted in attribute(type : 0x%x)\n",
+					       a->type);
 				errno = EIO;
 				ret = -1;
+				goto out;
 			}
 		}
 	}
@@ -3611,13 +3652,20 @@ int ntfs_attr_inconsistent(const ntfs_volume *vol, ATTR_RECORD *a,
 
 			if (!ret && a->resident_flags != RESIDENT_ATTR_IS_INDEXED &&
 					!(fn->file_attributes & FILE_ATTR_NOT_CONTENT_INDEXED)) {
-				check_failed("$FILE_NAME attribute's flag "
-						"is not set to be indexed\n");
+				if (NVolFsck(vol)) {
+					check_failed("$FILE_NAME attribute's flag "
+							"is not set to be indexed");
 
-				if (ntfsck_ask_repair(vol)) {
-					mod_a->resident_flags = RESIDENT_ATTR_IS_INDEXED;
-					*fixed = TRUE;
-					fsck_err_fixed();
+					if (ntfsck_ask_repair(vol)) {
+						mod_a->resident_flags = RESIDENT_ATTR_IS_INDEXED;
+						*fixed = TRUE;
+						fsck_err_fixed();
+					}
+				} else {
+					ntfs_log_error("$FILE_NAME attribute's flag "
+						       "is not set to be indexed\n");
+					errno = EIO;
+					ret = -1;
 				}
 			}
 
@@ -3652,15 +3700,25 @@ int ntfs_attr_inconsistent(const ntfs_volume *vol, ATTR_RECORD *a,
 			/* Is it needed? */
 			if (!ret && le32_to_cpu(ir->index_block_size) !=
 						vol->indx_record_size) {
-				check_failed("Corrupt index block size(%u %u) "
-						"in MFT record %llu.\n",
-						le32_to_cpu(ir->index_block_size),
-						vol->indx_record_size,
-						(unsigned long long)inum);
-				if (ntfsck_ask_repair(vol)) {
-					ir->index_block_size = le32_to_cpu(vol->indx_record_size);
-					*fixed = TRUE;
-					fsck_err_fixed();
+				if (NVolFsck(vol)) {
+					check_failed("Corrupt index block size(%u %u) "
+						     "in MFT record %llu.",
+						     le32_to_cpu(ir->index_block_size),
+						     vol->indx_record_size,
+						     (unsigned long long)inum);
+					if (ntfsck_ask_repair(vol)) {
+						ir->index_block_size = le32_to_cpu(vol->indx_record_size);
+						*fixed = TRUE;
+						fsck_err_fixed();
+					}
+				} else {
+					ntfs_log_error("Corrupt index block size(%u %u) "
+						       "in MFT record %llu.\n",
+						       le32_to_cpu(ir->index_block_size),
+						       vol->indx_record_size,
+						       (unsigned long long)inum);
+					errno = EIO;
+					ret = -1;
 				}
 			}
 
@@ -3725,6 +3783,10 @@ int ntfs_attr_inconsistent(const ntfs_volume *vol, ATTR_RECORD *a,
 			break;
 		}
 	}
+
+out:
+	if (mref <= FILE_MFTMirr)
+		NVolSetFsck(vol);
 	return (ret);
 }
 
