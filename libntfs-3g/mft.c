@@ -231,7 +231,7 @@ int ntfs_mft_records_write(const ntfs_volume *vol, const MFT_REF mref,
  *		-1 with errno = EIO otherwise
  */
 
-int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
+int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 			  MFT_RECORD *m)
 {
 	ATTR_RECORD *a;
@@ -241,6 +241,9 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	u32 biu;	/* bytes_in_use */
 	s32 space;
 	BOOL fixed = FALSE;
+
+	if (mref <= FILE_MFTMirr)
+		NVolClearFsck(vol);
 
 	/* check magic number of mft */
 	if (!ntfs_is_file_record(m->magic)) {
@@ -288,7 +291,7 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 	/* check bytes_in_use is aligned */
 	biu = le32_to_cpu(m->bytes_in_use);
 	if (biu & 7) {
-		check_failed("Used size of MFT record is badly aligned "
+		ntfs_log_error("Used size of MFT record is badly aligned "
 				"in record %llu",
 			       (unsigned long long)MREF(mref));
 		goto err_out;
@@ -299,7 +302,6 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 		ntfs_log_error("Record %llu has corrupt in-use size "
 			       "(%u > %u)\n", (unsigned long long)MREF(mref),
 			       (int)biu, (int)vol->mft_record_size);
-		fsck_err_found();
 		goto err_out;
 	}
 
@@ -309,8 +311,12 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 
 	/* check alignment of attribute start offset */
 	if (offset & 7) {
-		check_failed("Attributes badly aligned in record %llu",
-			       (unsigned long long)MREF(mref));
+		if (NVolFsck(vol))
+			check_failed("Attributes badly aligned in record %llu",
+				       (unsigned long long)MREF(mref));
+		else
+			ntfs_log_error("Attributes badly aligned in record %llu",
+				       (unsigned long long)MREF(mref));
 		if (ntfsck_ask_repair(vol)) {
 			offset = (offset + 7) & ~7;
 			m->attrs_offset = cpu_to_le16(offset);
@@ -381,15 +387,11 @@ int ntfs_mft_record_check(const ntfs_volume *vol, const MFT_REF mref,
 
 	ret = 0;
 err_out:
+	if (mref <= FILE_MFTMirr)
+		NVolSetFsck(vol);
 
 	if (fixed) {
-		if (mref <= FILE_MFTMirr) {
-			s64 pos = (vol->mft_lcn << vol->cluster_size_bits) +
-				(mref * vol->mft_record_size);
-
-			if (ntfs_mst_pwrite(vol->dev, pos, 1, vol->mft_record_size, m) != 1)
-				ret = -1;
-		} else if (ntfs_mft_record_write(vol, mref, m))
+		if (ntfs_mft_record_write(vol, mref, m))
 			ret = -1;
 	}
 

@@ -1225,9 +1225,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 
 		use_mirr = FALSE;
 		use_mft = FALSE;
-		if (!ntfs_mft_record_check(vol, (((vol->mftmirr_lcn - vol->mft_lcn) <<
-				vol->cluster_size_bits) >>  vol->mft_record_size_bits) +
-				FILE_MFT + i, mrec2))
+		if (!ntfs_mft_record_check(vol, FILE_MFT + i, mrec2))
 			use_mirr = TRUE;
 
 		if (!ntfs_mft_record_check(vol, FILE_MFT + i, mrec))
@@ -2235,7 +2233,7 @@ BOOL ntfsck_ask_repair(const ntfs_volume *vol)
 	BOOL repair = FALSE;
 	char answer[8];
 
-	if (NVolFsNoRepair(vol))
+	if (NVolFsNoRepair(vol) || !NVolFsck(vol))
 		repair = FALSE;
 	else if (NVolFsYesRepair(vol) || NVolFsAutoRepair(vol)) {
 		repair = TRUE;
