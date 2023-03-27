@@ -2162,7 +2162,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	} else {
 
 remove_index:
-		check_failed("mft entry(%llu:%s) is corrupted, Removing index entry(%llu)",
+		check_failed("mft entry(%llu:%s) is corrupted, Removing index entry from parent(%llu)",
 				(unsigned long long)MREF(mref), filename,
 				(unsigned long long)MREF_LE(ie_fn->parent_directory));
 		if (ntfsck_ask_repair(vol)) {
