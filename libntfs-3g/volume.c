@@ -295,6 +295,19 @@ static int ntfs_mft_load(ntfs_volume *vol)
 	if (!ctx)
 		goto error_exit;
 
+	/* Check if there is $SI attribute in $MFT. */
+	if (ntfs_attr_lookup(AT_STANDARD_INFORMATION, AT_UNNAMED,
+				0, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+		ntfs_log_perror("No STANDARD_INFORMATION in $MFT record\n");
+		goto error_exit;
+	}
+
+	if (le32_to_cpu(ctx->attr->value_length) <
+	    offsetof(STANDARD_INFORMATION, owner_id)) {
+		ntfs_log_error("Corrupt STANDARD_INFORMATION in $MFT record\n");
+		goto error_exit;
+	}
+
 	/* Find the $ATTRIBUTE_LIST attribute in $MFT if present. */
 	if (ntfs_attr_lookup(AT_ATTRIBUTE_LIST, AT_UNNAMED, 0, 0, 0, NULL, 0,
 			ctx)) {
