@@ -263,6 +263,8 @@ static int ntfs_mft_load(ntfs_volume *vol)
 	ntfs_attr_search_ctx *ctx = NULL;
 	ATTR_RECORD *a;
 	int eo;
+	char *filename;
+	FILE_NAME_ATTR *fn;
 
 	/* Manually setup an ntfs_inode. */
 	vol->mft_ni = ntfs_inode_allocate(vol);
@@ -355,6 +357,16 @@ mft_has_no_attr_list:
 	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED,
 				0, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 		ntfs_log_perror("No FILE_NAME in $MFT record\n");
+		goto error_exit;
+	}
+
+	/* Check if filename is "$MFT" */
+	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+				le16_to_cpu(ctx->attr->value_offset));
+	filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
+	if (!filename || strcmp(filename, "$MFT")) {
+		ntfs_log_error("filename of $MFT record is not '$MFT'(%s)\n",
+				filename);
 		goto error_exit;
 	}
 
@@ -478,6 +490,9 @@ error_exit:
 static int ntfs_mftmirr_load(ntfs_volume *vol)
 {
 	int err;
+	char *filename;
+	FILE_NAME_ATTR *fn;
+	ntfs_attr_search_ctx *ctx = NULL;
 
 	vol->mftmirr_ni = ntfs_inode_open(vol, FILE_MFTMirr);
 	if (!vol->mftmirr_ni) {
@@ -506,11 +521,34 @@ static int ntfs_mftmirr_load(ntfs_volume *vol)
 				(long long)vol->mftmirr_lcn);
 		goto error_exit;
 	}
-	
+
+	ctx = ntfs_attr_get_search_ctx(vol->mftmirr_ni, NULL);
+	if (!ctx)
+		goto error_exit;
+
+	/* Check if there is $FN attribute in $MFT. */
+	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED,
+				0, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+		ntfs_log_perror("No FILE_NAME in $MFTMirr record\n");
+		goto error_exit;
+	}
+
+	/* Check if filename is "$MFTMirr" */
+	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+				le16_to_cpu(ctx->attr->value_offset));
+	filename = ntfs_attr_name_get(fn->file_name, fn->file_name_length);
+	if (!filename || strcmp(filename, "$MFTMirr")) {
+		ntfs_log_error("filename of $MFT record is not '$MFTMirr'(%s)\n",
+				filename);
+		goto error_exit;
+	}
+	ntfs_attr_put_search_ctx(ctx);
 	return 0;
 
 error_exit:
 	err = errno;
+	if (ctx)
+		ntfs_attr_put_search_ctx(ctx);
 	if (vol->mftmirr_na) {
 		ntfs_attr_close(vol->mftmirr_na);
 		vol->mftmirr_na = NULL;
