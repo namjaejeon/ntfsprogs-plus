@@ -193,8 +193,16 @@ static const struct option opts[] = {
 static u8 *fsck_mft_bmp;
 static s64 fsck_mft_bmp_size;
 
-u8 *fsck_lcn_bitmap;
-unsigned int fsck_lcn_bitmap_size;
+struct fsck_lcn_bm {
+	u8 *bm;
+	s64 lcn;
+	s64 length;
+	s64 end;
+	u32 bm_size;
+	struct ntfs_list_head list;
+};
+
+NTFS_LIST_HEAD(ntfsck_flb_list);
 
 static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 		FILE_NAME_ATTR *ie_fn, ntfs_attr_search_ctx *actx);
@@ -263,11 +271,132 @@ static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
 	return 0;
 }
 
+static void ntfsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
+{
+	while (length--)
+		ntfs_bit_set(bm, pos++, bit);
+}
+
+#define FLB_ROUND_UP(x)		(((x) + ((NTFS_BUF_SIZE << 3) - 1)) & ~((NTFS_BUF_SIZE << 3) - 1))
+#define FLB_ROUND_DOWN(x)	((x) & ~((NTFS_BUF_SIZE << 3) - 1))
+static int ntfsck_alloc_flb(s64 lcn, s64 length, u8 bit)
+{
+	struct fsck_lcn_bm *flb = NULL;
+	s64 lcn_rd, lcn_ru, length_ru;
+
+	flb = (struct fsck_lcn_bm *)ntfs_calloc(sizeof(struct fsck_lcn_bm));
+	if (!flb) {
+		ntfs_log_perror("Can't extend lcn bitmap memory\n");
+		return -ENOMEM;
+	}
+
+	lcn_rd = FLB_ROUND_DOWN(lcn);
+	lcn_ru = FLB_ROUND_UP(lcn);
+	length_ru = FLB_ROUND_UP(length);
+
+	flb->bm = (u8 *)ntfs_calloc((lcn_ru - lcn_rd + length_ru) >> 3);
+	if (!flb->bm) {
+		ntfs_log_perror("Can't extend lcn bitmap memory\n");
+		ntfs_free(flb);
+		return -ENOMEM;
+	}
+
+	flb->lcn = lcn_rd;
+	flb->length = length_ru;
+	flb->end = lcn_rd + length_ru;
+	flb->bm_size = (lcn_ru - lcn_rd + length_ru) >> 3;
+	ntfs_list_add_tail(&flb->list, &ntfsck_flb_list);
+	ntfsck_set_bitmap_range(flb->bm, lcn - lcn_rd, length, bit);
+	return 0;
+}
+
+static u8 *ntfsck_read_lcnbmp_range(s64 lcn, s64 length)
+{
+	struct fsck_lcn_bm *flb = NULL;
+	struct ntfs_list_head *item;
+
+	ntfs_list_for_each(item, &ntfsck_flb_list) {
+		flb = ntfs_list_entry(item, struct fsck_lcn_bm, list);
+		if (flb->lcn <= lcn && flb->end >= lcn + length)
+			return &flb->bm[(lcn - flb->lcn) >> 3];
+	}
+
+	return NULL;
+}
+
+static int ntfsck_expand_flb_bm_size(struct fsck_lcn_bm *flb, s64 lcn, s64 length)
+{
+	s64 len_ru = (FLB_ROUND_UP(lcn) + FLB_ROUND_UP(length)) - flb->lcn;
+	u32 expand = ((FLB_ROUND_UP(lcn) + FLB_ROUND_UP(length)) - flb->end) >> 3;
+
+	flb->bm = realloc(flb->bm, flb->bm_size + expand);
+	if (!flb->bm)
+		return -ENOMEM;
+	memset(flb->bm + flb->bm_size, 0, expand);
+	flb->length = len_ru;
+	flb->end = flb->lcn + flb->length;
+	flb->bm_size = flb->bm_size + expand;
+
+	return 0;
+}
+
+static int ntfsck_write_lcnbmp_range(s64 lcn, s64 length, u8 bit)
+{
+	BOOL found = FALSE;
+	struct fsck_lcn_bm *flb = NULL;
+	struct ntfs_list_head *item;
+	int ret = 0;
+
+	/*
+	 * Lookup a fsck lcnbmp item using given lcn and length.
+	 * If not found, Add new item to list.
+	 */
+	ntfs_list_for_each(item, &ntfsck_flb_list) {
+		flb = ntfs_list_entry(item, struct fsck_lcn_bm, list);
+		/*
+		 * If given length is greater than the end of flb->end,
+		 * Expand flb->bm size. If lcn is lesser than flb->lcn,
+		 * We don't expand it and add new flb item. because
+		 * expanding size cause memcpy overhead after
+		 * reallocating flb->bm size.
+		 */
+		if (flb->lcn <= lcn && flb->end > lcn) {
+			if (flb->end < lcn + length) {
+				ret = ntfsck_expand_flb_bm_size(flb, lcn, length);
+				if (ret)
+					return ret;
+			}
+
+			ntfsck_set_bitmap_range(flb->bm, lcn - flb->lcn, length, bit);
+			found = TRUE;
+			break;
+		}
+
+		if (flb->lcn > lcn && flb->lcn < lcn + length) {
+			if (flb->end < lcn + length) {
+				ret = ntfsck_expand_flb_bm_size(flb, lcn, length);
+				if (ret)
+					return ret;
+			}
+
+			ntfsck_set_bitmap_range(flb->bm, 0, length, bit);
+			length = flb->lcn;
+		}
+	}
+
+	if (found == FALSE)
+		ret = ntfsck_alloc_flb(lcn, length, bit);
+
+	return ret;
+}
+
 static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 {
 	s64 pos = 0, wpos, i, count, written;
 	BOOL backup_boot_check = FALSE, repair = FALSE;
 	u8 bm[NTFS_BUF_SIZE];
+	u8 *flb_bm;
+	u8 zero_bm[NTFS_BUF_SIZE] = {0};
 
 	fsck_start_step("Check cluster bitmap...\n");
 
@@ -287,13 +416,18 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 			break;
 		}
 
+		/*
+		 * If we can't find flb item from the list,
+		 * simply use zero bitmap buffer.
+		 */
+		flb_bm = ntfsck_read_lcnbmp_range(pos << 3, count << 3);
+		if (!flb_bm)
+			flb_bm = zero_bm;
+
 		for (i = 0; i < count; i++, pos++) {
 			s64 cl;  /* current cluster */
 
-			if (pos >= fsck_lcn_bitmap_size)
-				continue;
-
-			if (fsck_lcn_bitmap[pos] == bm[i])
+			if (flb_bm[i] == bm[i])
 				continue;
 
 			for (cl = pos * 8; cl < (pos + 1) * 8; cl++) {
@@ -303,7 +437,7 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 					break;
 
 				lbmp_bit = ntfs_bit_get(bm, i * 8 + cl % 8);
-				fsck_bmp_bit = ntfs_bit_get(fsck_lcn_bitmap, cl);
+				fsck_bmp_bit = ntfs_bit_get(flb_bm, i * 8 + cl % 8);
 				if (fsck_bmp_bit != lbmp_bit) {
 					if (!fsck_bmp_bit && backup_boot_check == FALSE &&
 					    cl == vol->nr_clusters / 2) {
@@ -340,33 +474,6 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 
 }
 
-static void ntfsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
-{
-	while (length--)
-		ntfs_bit_set(bm, pos++, bit);
-}
-
-static int ntfsck_set_lcnbmp_range(s64 pos, s64 length, u8 bit)
-{
-	if (fsck_lcn_bitmap_size <= (pos + length) >> 3) {
-		int off = fsck_lcn_bitmap_size;
-
-		fsck_lcn_bitmap_size = (((pos + length) >> 3) + 1 +
-			(NTFS_BLOCK_SIZE - 1)) & ~(NTFS_BLOCK_SIZE - 1);
-		fsck_lcn_bitmap = ntfs_realloc(fsck_lcn_bitmap,
-				fsck_lcn_bitmap_size);
-		if (!fsck_lcn_bitmap) {
-			ntfs_log_perror("Can't extend lcn bitmap memory\n");
-			return -ENOMEM;
-		}
-
-		memset(fsck_lcn_bitmap + off, 0, fsck_lcn_bitmap_size - off);
-	}
-
-	ntfsck_set_bitmap_range(fsck_lcn_bitmap, pos, length, bit);
-	return 0;
-}
-
 static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 {
 	ntfs_attr_search_ctx *actx;
@@ -391,7 +498,7 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		while (rl[i].length) {
 			if (rl[i].lcn > (LCN)LCN_HOLE) {
-				ntfsck_set_lcnbmp_range(rl[i].lcn, rl[i].length, 1);
+				ntfsck_write_lcnbmp_range(rl[i].lcn, rl[i].length, 1);
 				ntfs_log_verbose("Cluster run of mft entry(%ld) : lcn : %ld, length : %ld\n",
 						ni->mft_no, rl[i].lcn, rl[i].length);
 			}
@@ -440,7 +547,7 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 
-			ntfsck_set_lcnbmp_range(rl[i].lcn, rl[i].length, set_bit);
+			ntfsck_write_lcnbmp_range(rl[i].lcn, rl[i].length, set_bit);
 
 			if (set_bit == 0)
 				ntfs_cluster_free_basic(vol, rl[i].lcn, rl[i].length);
@@ -2572,17 +2679,9 @@ static ntfs_volume *ntfsck_mount(const char *path __attribute__((unused)),
 	if (!vol)
 		return NULL;
 
-	fsck_lcn_bitmap_size = NTFS_BLOCK_SIZE;
-	fsck_lcn_bitmap = ntfs_calloc(fsck_lcn_bitmap_size);
-	if (!fsck_lcn_bitmap) {
-		ntfs_umount(vol, FALSE);
-		return NULL;
-	}
-
 	fsck_mft_bmp_size = NTFS_BLOCK_SIZE;
 	fsck_mft_bmp = ntfs_calloc(fsck_mft_bmp_size);
 	if (!fsck_mft_bmp) {
-		free(fsck_lcn_bitmap);
 		ntfs_umount(vol, FALSE);
 		return NULL;
 	}
@@ -2592,9 +2691,6 @@ static ntfs_volume *ntfsck_mount(const char *path __attribute__((unused)),
 
 static void ntfsck_umount(ntfs_volume *vol)
 {
-	if (fsck_lcn_bitmap)
-		free(fsck_lcn_bitmap);
-
 	if (fsck_mft_bmp)
 		free(fsck_mft_bmp);
 
