@@ -2267,6 +2267,172 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 	return STATUS_OK;
 }
 
+static void ntfsck_validate_index_blocks(ntfs_volume *vol,
+					 ntfs_index_context *ictx)
+{
+	INDEX_ALLOCATION *ia;
+	FILE_NAME_ATTR *ie_fn;
+	INDEX_ENTRY *ie;
+	INDEX_ROOT *ir = ictx->ir;
+	ntfs_inode *ni = ictx->ni, *cni;
+	MFT_REF mref;
+	VCN vcn;
+	u32 ir_size = le32_to_cpu(ir->index.index_length);
+	u32 ib_cnt = 1, i;
+	BOOL ib_corrupted = FALSE;
+	u8 *ir_buf, *ia_buf = NULL, *ibs, *index_end;
+
+	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
+			ictx->name, ictx->name_len);
+	if (!ictx->ia_na)
+		return;
+
+	ir_buf = malloc(le32_to_cpu(ir->index.index_length));
+	if (!ir_buf) {
+		ntfs_log_error("Failed to allocate ir buffer\n");
+		return;
+	}
+
+	memcpy(ir_buf, (u8 *)&ir->index + le32_to_cpu(ir->index.entries_offset),
+		       ir_size);
+
+	ia_buf = ntfs_malloc(ictx->ia_na->data_size);
+	if (!ia_buf) {
+		ntfs_log_error("Failed to allocate ia buffer\n");
+		goto out;
+	}
+
+	ibs = ia_buf;
+	for (i = ictx->ia_na->data_size, vcn = 0; i > 0; i -= ictx->block_size, vcn++) {
+		if (ntfs_attr_mst_pread(ictx->ia_na,
+					ntfs_ib_vcn_to_pos(ictx, vcn), 1,
+					ictx->block_size, ibs) != 1) {
+			ntfs_log_error("Failed to read index blocks, %d\n", errno);
+			ib_corrupted = TRUE;
+			goto out;
+		}
+
+		if (ntfs_index_block_inconsistent(vol, ictx->ia_na, (INDEX_ALLOCATION *)ibs,
+					ictx->block_size, ni->mft_no,
+					vcn)) {
+			ib_corrupted = TRUE;
+		}
+		ibs += ictx->block_size;
+	}
+
+	if (ib_corrupted == FALSE)
+		goto out;
+
+	if (ntfsck_initialize_index_attr(ni)) {
+		ntfs_log_error("Failed to initialize index attributes of ntfs inode(%ld), errno %d\n",
+				ni->mft_no, errno);
+		goto out;
+	}
+
+	index_end = ir_buf + ir_size;
+	ie = (INDEX_ENTRY *)ir_buf;
+
+	for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+		if ((u8 *)ie + sizeof(INDEX_ENTRY_HEADER) > index_end ||
+		    (u8 *)ie + le16_to_cpu(ie->length) > index_end) {
+
+			ntfs_log_verbose("Index root entry out of bounds in"
+					" inode %lld\n",
+					(unsigned long long)ni->mft_no);
+			break;
+		}
+
+		/* The last entry cannot contain a name. */
+		if (ie->ie_flags & INDEX_ENTRY_END)
+			break;
+
+		if (!le16_to_cpu(ie->length))
+			break;
+
+		/* The file name must not overflow from the entry */
+		if (ntfs_index_entry_inconsistent(vol, ie, COLLATION_FILE_NAME,
+				ni->mft_no, NULL) < 0)
+			continue;
+
+		ie_fn = &ie->key.file_name;
+		mref = le64_to_cpu(ie->indexed_file);
+		ntfs_log_info("Inserting entry to index root, mref : %ld, %s\n",
+			      le64_to_cpu(ie->indexed_file),
+			      ntfs_attr_name_get(ie_fn->file_name,
+			      ie_fn->file_name_length));
+
+		cni = ntfs_inode_open(vol, MREF(mref));
+		if (!cni)
+			continue;
+
+		if (ntfs_index_add_filename(ni, ie_fn,
+					    MK_MREF(cni->mft_no,
+					    le16_to_cpu(cni->mrec->sequence_number))))
+			ntfs_log_error("Failed to add index entry, errno : %d\n",
+					errno);
+	}
+
+	if (ictx->ia_na->data_size > ictx->block_size - 1)
+		ib_cnt = ictx->ia_na->data_size / ictx->block_size;
+
+	ia = (INDEX_ALLOCATION *)ia_buf;
+	for (i = 0; i < ib_cnt; i++) {
+		index_end = (u8 *)ia + ictx->block_size;
+		ie = (INDEX_ENTRY *)((u8 *)&ia->index +
+				le32_to_cpu(ia->index.entries_offset));
+
+		for (;; ie = (INDEX_ENTRY *)((u8 *)ie + le16_to_cpu(ie->length))) {
+			/* Bounds checks. */
+			if ((u8 *)ie < (u8 *)ia || (u8 *)ie +
+				sizeof(INDEX_ENTRY_HEADER) > index_end ||
+				(u8 *)ie + le16_to_cpu(ie->length) >
+				index_end) {
+
+				ntfs_log_verbose("Index entry out of bounds in directory inode "
+						 "%lld.\n", (unsigned long long)ni->mft_no);
+				break;
+			}
+
+			/* The last entry cannot contain a name. */
+			if (ie->ie_flags & INDEX_ENTRY_END)
+				break;
+
+			if (!le16_to_cpu(ie->length))
+				break;
+
+			/* The file name must not overflow from the entry */
+			if (ntfs_index_entry_inconsistent(vol, ie,
+							  COLLATION_FILE_NAME,
+							  ni->mft_no,
+							  NULL))
+				continue;
+
+			ie_fn = &ie->key.file_name;
+			mref = le64_to_cpu(ie->indexed_file);
+			ntfs_log_info("Inserting entry to $IA, mref : %ld, %s\n",
+				      le64_to_cpu(ie->indexed_file),
+				      ntfs_attr_name_get(ie_fn->file_name,
+				      ie_fn->file_name_length));
+
+			cni = ntfs_inode_open(vol, MREF(mref));
+			if (!cni)
+				continue;
+
+			if (ntfs_index_add_filename(ni, ie_fn,
+					MK_MREF(cni->mft_no,
+						le16_to_cpu(cni->mrec->sequence_number))))
+				ntfs_log_error("Failed to add index entry, errno : %d\n",
+						errno);
+		}
+		ia = (INDEX_ALLOCATION *)((u8 *)ia + ictx->block_size);
+	}
+
+out:
+	ntfs_free(ir_buf);
+	if (ia_buf)
+		ntfs_free(ia_buf);
+}
+
 static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 {
 	ntfs_inode *ni;
@@ -2347,6 +2513,8 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			ictx->vcn_size_bits = vol->cluster_size_bits;
 		else
 			ictx->vcn_size_bits = NTFS_BLOCK_SIZE_BITS;
+
+		ntfsck_validate_index_blocks(vol, ictx);
 
 		/* The first index entry. */
 		next = (INDEX_ENTRY*)((u8*)&ir->index +
