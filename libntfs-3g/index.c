@@ -70,7 +70,7 @@ void ntfs_index_entry_mark_dirty(ntfs_index_context *ictx)
 		ictx->ib_dirty = TRUE;
 }
 
-static s64 ntfs_ib_vcn_to_pos(ntfs_index_context *icx, VCN vcn)
+s64 ntfs_ib_vcn_to_pos(ntfs_index_context *icx, VCN vcn)
 {
 	return vcn << icx->vcn_size_bits;
 }

@@ -183,6 +183,7 @@ int ntfs_ib_write(ntfs_index_context *icx, INDEX_BLOCK *ib);
 int ntfsck_update_index_entry(ntfs_index_context *ictx);
 int ntfs_ibm_modify(ntfs_index_context *icx, VCN vcn, int set);
 INDEX_ROOT *ntfs_ir_lookup2(ntfs_inode *ni, ntfschar *name, u32 len);
+s64 ntfs_ib_vcn_to_pos(ntfs_index_context *icx, VCN vcn);
 
 #endif /* _NTFS_INDEX_H */
 
