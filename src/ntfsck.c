@@ -2810,6 +2810,66 @@ static ntfs_inode *ntfsck_get_opened_ni_vol(ntfs_volume *vol, s64 mft_num)
 	return ni;
 }
 
+static int ntfsck_validate_system_file(ntfs_inode *ni)
+{
+	ntfs_volume *vol = ni->vol;
+	int err;
+
+	switch (ni->mft_no) {
+	case FILE_Bitmap:
+		s64 max_lcnbmp_size;
+
+		if (ntfs_attr_map_whole_runlist(vol->lcnbmp_na)) {
+			ntfs_log_perror("Failed to map runlist\n");
+			return -EIO;
+		}
+
+		/* Check cluster run of $DATA attribute */
+		if (ntfsck_setbit_runlist(ni, vol->lcnbmp_na->rl, 1, NULL, FALSE)) {
+			ntfs_log_error("Failed to check and setbit runlist. "
+				       "Leaving inconsistent metadata.\n");
+			return -EIO;
+		}
+
+		/* Check if data size is valid. */
+		max_lcnbmp_size = (vol->nr_clusters + 7) >> 3;
+		ntfs_log_verbose("max_lcnbmp_size : %ld, lcnbmp data_size : %ld\n",
+				max_lcnbmp_size, vol->lcnbmp_na->data_size);
+		if (max_lcnbmp_size > vol->lcnbmp_na->data_size) {
+			u8 *zero_bm;
+			s64 written;
+			s64 zero_bm_size = max_lcnbmp_size -
+						vol->lcnbmp_na->data_size;
+
+			check_failed("$Bitmap size is smaller than expected (%ld < %ld)",
+						max_lcnbmp_size, vol->lcnbmp_na->data_size);
+
+			if (ntfsck_ask_repair(vol)) {
+				zero_bm = ntfs_calloc(max_lcnbmp_size -
+						vol->lcnbmp_na->data_size);
+				if (!zero_bm) {
+					ntfs_log_error("Failed to allocat zero_bm\n");
+					return -ENOMEM;
+				}
+
+				written = ntfs_attr_pwrite(vol->lcnbmp_na,
+						vol->lcnbmp_na->data_size,
+						zero_bm_size, zero_bm);
+				ntfs_free(zero_bm);
+				if (written != zero_bm_size) {
+					ntfs_log_error("lcn bitmap write failed, pos : %ld, count : %ld, written : %ld\n",
+							vol->lcnbmp_na->data_size,
+							zero_bm_size, written);
+					return -EIO;
+				}
+			}
+		}
+		break;
+	}
+
+	return 0;
+}
+
 static int ntfsck_check_system_files(ntfs_volume *vol)
 {
 	ntfs_inode *sys_ni, *root_ni;
@@ -2896,6 +2956,13 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			ntfs_inode_close(sys_ni);
 			goto put_index_ctx;
 		}
+
+		/* TODO: Validate index entry of system file */
+
+		/* Validate mft entry of system file */
+		err = ntfsck_validate_system_file(sys_ni);
+		if (err)
+			goto put_index_ctx;
 
 		ntfs_index_ctx_reinit(ictx);
 		ntfs_attr_put_search_ctx(sys_ctx);
