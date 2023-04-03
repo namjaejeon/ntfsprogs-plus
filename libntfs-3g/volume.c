@@ -369,6 +369,7 @@ mft_has_no_attr_list:
 				filename);
 		goto error_exit;
 	}
+	ntfs_attr_name_free(&filename);
 
 	/* Get an ntfs attribute for $MFT/$DATA and set it up, too. */
 	vol->mft_na = ntfs_attr_open(vol->mft_ni, AT_DATA, AT_UNNAMED, 0);
@@ -542,6 +543,7 @@ static int ntfs_mftmirr_load(ntfs_volume *vol)
 				filename);
 		goto error_exit;
 	}
+	ntfs_attr_name_free(&filename);
 	ntfs_attr_put_search_ctx(ctx);
 	return 0;
 
