@@ -641,10 +641,6 @@ stack_of:
 
 		parent_no = le64_to_cpu(fn->parent_directory);
 
-		/* skip if parent is system file */
-		if (MREF(parent_no) < FILE_first_user)
-			goto delete_inodes;
-
 		/*
 		 * Consider that the parent could be orphaned.
 		 */
@@ -2443,7 +2439,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	struct dir *dir;
 	INDEX_ROOT *ir;
 	INDEX_ENTRY *next;
-	INDEX_ENTRY *prev;
 	ntfs_attr_search_ctx *ctx = NULL;
 	ntfs_index_context *ictx = NULL;
 	ntfs_attr *bm_na = NULL;
@@ -2547,7 +2542,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				}
 			}
 		}
-		prev = next;
 
 		ret = ntfs_index_entry_inconsistent(vol, next, cr, 0, ictx);
 		if (ret > 0) {
@@ -2556,7 +2550,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 				fsck_err_failed();
 				goto err_continue;
 			}
-			prev = next;
 		} else if (ret < 0) {
 			goto err_continue;
 		}
@@ -2572,7 +2565,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		while ((next = ntfs_index_next(next, ictx)) != NULL) {
 check_index:
-			prev = next;
 			ret = ntfsck_check_index(vol, next, ictx);
 			if (ret) {
 				next = ictx->entry;
@@ -2588,54 +2580,6 @@ check_index:
 		}
 
 next_dir:
-		if (!next && ictx->bad_index == TRUE) {
-			INDEX_ENTRY *ie_temp;
-			INDEX_HEADER *ih;
-
-			check_failed("Index block is corrupted. inode(%llu)",
-					(unsigned long long)dir->ni->mft_no);
-
-			if (ntfsck_ask_repair(vol)) {
-				ictx->entry = prev;	/* set previous entry */
-				prev->ie_flags &= ~INDEX_ENTRY_NODE;
-				prev->length = cpu_to_le16(le16_to_cpu(prev->length) - 8);
-
-				/* ntfs_ie_end() */
-				if (prev->ie_flags & INDEX_ENTRY_END || !prev->length) {
-					if (ictx->parent_vcn[ictx->pindex] == VCN_INDEX_ROOT_PARENT) {
-						ih = &ictx->ir->index;
-						if (ntfs_ih_zero_entry(ih)) {
-							ntfs_attr_truncate(ictx->ia_na, 0);
-							ih->ih_flags = SMALL_INDEX;
-						}
-					}
-				} else {
-					/* TODO: set flags */
-					ie_temp = ntfs_ie_dup_novcn(prev);
-					ret = ntfs_index_rm(ictx);
-					if (!ret)
-						ntfs_ie_add(ictx, ie_temp);
-					free(ie_temp);
-				}
-
-				if (ictx->parent_vcn[ictx->pindex] == VCN_INDEX_ROOT_PARENT)
-					ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
-				else
-					if (ntfs_ib_write(ictx, ictx->prev_ib))
-						goto err_continue;
-
-				/* set ictx field to free in ntfs_index_ctx_put() */
-				ictx->entry = NULL;
-				ictx->bad_index = FALSE;
-
-				if (ictx->prev_ib && ictx->prev_ib != ictx->ib)
-					free(ictx->prev_ib);
-
-				ictx->prev_ib = NULL;
-				fsck_err_fixed();
-			}
-		}
-
 		/* compare index allocation bitmap between disk & fsck */
 		if (bm_na) {
 			if (ntfsck_check_index_bitmap(dir->ni, bm_na))
