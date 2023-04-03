@@ -1559,7 +1559,6 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 	ntfs_attr *bm_na = NULL;
 	ntfs_attr *ia_na = NULL;
 	ntfs_attr *ir_na = NULL;
-	u8 bmp[8];
 	int ret = STATUS_ERROR;
 
 	/*
@@ -2527,8 +2526,9 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			/* read $IA */
-			ictx->ia_na = ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
-						    ictx->name, ictx->name_len);
+			if (!ictx->ia_na)
+				ictx->ia_na = ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
+						ictx->name, ictx->name_len);
 			if (!ictx->ia_na) {
 				ntfs_log_perror("Failed to open index allocation of inode "
 						"%llu", (unsigned long long)dir->ni->mft_no);
