@@ -62,6 +62,8 @@
 #define RETURN_FS_NOT_SUPPORT (64)	/* Not defined in fsck man page */
 #define RETURN_SHARED_LIBRARY_ERROR (128)
 
+#define FILENAME_LOST_FOUND "lost+found"
+
 /* todo: command line: (everything is optional)
  *  fsck-frontend options:
  *	-C [fd]	: display progress bar (send it to the file descriptor if specified)
@@ -224,7 +226,7 @@ char ntfsck_mft_bmp_bit_get(const u64 bit)
 	return ntfs_bit_get(fsck_mft_bmp[bm_i], bit - bm_pos);
 }
 
-int ntfsck_mft_bmp_bit_set(u64 mft_no)
+static int _ntfsck_mft_record_bitmap_set(u64 mft_no, int value)
 {
 	u32 bm_i = FB_ROUND_DOWN(mft_no >> NTFSCK_BYTE_TO_BITS);
 	s64 bm_pos = bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
@@ -242,8 +244,18 @@ int ntfsck_mft_bmp_bit_set(u64 mft_no)
 			return -ENOMEM;
 	}
 
-	ntfs_bit_set(fsck_mft_bmp[bm_i], mft_diff, 1);
+	ntfs_bit_set(fsck_mft_bmp[bm_i], mft_diff, value);
 	return 0;
+}
+
+int ntfsck_mft_bmp_bit_clear(u64 mft_no)
+{
+	return _ntfsck_mft_record_bitmap_set(mft_no, 0);
+}
+
+int ntfsck_mft_bmp_bit_set(u64 mft_no)
+{
+	return _ntfsck_mft_record_bitmap_set(mft_no, 1);
 }
 
 static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
@@ -581,18 +593,29 @@ static void ntfsck_check_non_resident_cluster(ntfs_inode *ni, u8 set_bit)
  * */
 static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 {
+	ntfs_inode *free_inode;
+	u64 free_mftno;
+
 	ntfs_inode_attach_all_extents(ni);
 	while (ni->nr_extents) {
-		if (ntfs_mft_record_free(vol, *(ni->extent_nis)))
-			ntfs_log_error("Failed to free extent MFT record(%llu). "
+		free_inode = *(ni->extent_nis);
+		free_mftno = free_inode->mft_no;
+		if (ntfs_mft_record_free(vol, free_inode))
+			ntfs_log_error("Failed to free extent MFT record(%llu:%llu). "
 					"Leaving inconsistent metadata.\n",
+					(unsigned long long)free_mftno,
 					(unsigned long long)ni->mft_no);
+		else
+			ntfsck_mft_bmp_bit_clear(free_mftno);
 	}
 
+	free_mftno = ni->mft_no;
 	if (ntfs_mft_record_free(vol, ni))
 		ntfs_log_error("Failed to free MFT record(%llu). "
 				"Leaving inconsistent metadata. Run chkdsk.\n",
 				(unsigned long long)ni->mft_no);
+	else
+		ntfsck_mft_bmp_bit_clear(free_mftno);
 }
 
 /* only called from repairing orphaned file in auto fsck mode */
@@ -600,12 +623,9 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 		FILE_NAME_ATTR *fn)
 {
 	ntfs_index_context *ictx;
-	ntfs_volume *vol;
 
 	if (!parent_ni || !ni || !fn)
 		return STATUS_ERROR;
-
-	vol = ni->vol;
 
 	ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
 	if (!ictx) {
@@ -631,8 +651,6 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 				return STATUS_ERROR;
 			}
 			ntfs_inode_mark_dirty(ictx->ni);
-			ntfsck_check_non_resident_cluster(ni, 0);
-			ntfsck_free_mft_records(vol, ni);
 
 			ntfs_index_ctx_put(ictx);
 			return STATUS_ERROR;
@@ -645,6 +663,118 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 
 	ntfs_index_ctx_put(ictx);
 	return STATUS_OK;
+}
+
+static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
+		ntfs_inode *ni, FILE_NAME_ATTR *fn, ntfs_attr_search_ctx *ctx)
+{
+	int err = STATUS_OK;
+	int ret = STATUS_ERROR;
+
+	/* Add index for orphaned inode */
+	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
+		ntfsck_initialize_index_attr(ni);
+
+		/*
+		 * fn pointer could be changed to invalid place after
+		 * resetting $IR and $IA. Re-lookup $FILE_NAME.
+		 */
+		ntfs_attr_reinit_search_ctx(ctx);
+		err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+				CASE_SENSITIVE, 0, NULL, 0, ctx);
+		if (err) {
+			/* $FILE_NAME lookup failed */
+			ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%llu)\n",
+					(unsigned long long)ni->mft_no);
+			err = 0;
+			/* delete inode */
+			return STATUS_ERROR;
+		}
+
+		fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+				le16_to_cpu(ctx->attr->value_offset));
+
+		fn->allocated_size = 0;
+		fn->data_size = 0;
+		ni->allocated_size = 0;
+		ni->data_size = 0;
+		ntfs_inode_mark_dirty(ni);
+	}
+
+	/* TODO: name is same, but inodes are different */
+	ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
+	if (ret == STATUS_OK) { /* index already exist in parent inode */
+		printf("ntfsck_find_and_check_index %d\n", ret);
+		return STATUS_OK;
+	} else if (ret == STATUS_ERROR) {
+		err = -EIO;
+		/* already inode is deleted in ntfsck_find_and_check_inode()
+		 * return STATUS_OK? */
+		return STATUS_ERROR;
+	}
+
+	/* Not found index for $FN */
+
+	err = ntfs_index_add_filename(parent_ni, fn, MK_MREF(ni->mft_no,
+				le16_to_cpu(ni->mrec->sequence_number)));
+	if (err) {
+		ntfs_log_error("Failed to add index(%llu) to parent(%llu) "
+				"err(%d)\n",
+				(unsigned long long)ni->mft_no,
+				(unsigned long long)parent_ni->mft_no, err);
+		err = -EIO;
+		/* if parent_ni != lost+found, then add inode to lostfound */
+		return STATUS_ERROR;
+	}
+
+	/* check again after adding $FN to index */
+	ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
+	if (ret != STATUS_OK) {
+		errno = -EIO;
+		err = -EIO;
+		/* TODO: I don't know what should be done ??? */
+		return STATUS_ERROR;
+	}
+
+	ntfsck_mft_bmp_bit_set(ni->mft_no);
+	ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
+
+	ntfsck_update_lcn_bitmap(ni);
+	/*
+	 * Recall ntfsck_update_lcn_bitmap() about parent_ni.
+	 * Because cluster can be allocated by adding index entry.
+	 */
+	ntfsck_update_lcn_bitmap(parent_ni);
+
+	return STATUS_OK;
+}
+
+static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
+		ntfs_attr_search_ctx *ctx)
+{
+	ntfs_volume *vol;
+	ntfs_inode *lost_found;
+	int ret = STATUS_ERROR;
+
+	if (!ni) {
+		ntfs_log_error("inode point is NULL\n");
+		return ret;
+	}
+
+	vol = ni->vol;
+	lost_found = ntfs_inode_open(vol, vol->lost_found);
+	if (!lost_found) {
+		ntfs_log_error("Can't open lost+found directory\n");
+		return ret;
+	}
+
+	fn->parent_directory = MK_LE_MREF(lost_found->mft_no,
+			le16_to_cpu(lost_found->mrec->sequence_number));
+	ntfs_inode_mark_dirty(ni);
+
+	ret = ntfsck_add_inode_to_parent(vol, lost_found, ni, fn, ctx);
+	ntfs_inode_close(lost_found);
+	return ret;
 }
 
 static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, s64 mft_no)
@@ -660,7 +790,7 @@ static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, s64 mft_no)
 	};
 	NTFS_LIST_HEAD(ntfs_orphan_list);
 	struct orphan_mft *of;
-	int err = 0;
+	int ret = STATUS_ERROR;
 
 stack_of:
 	of = (struct orphan_mft *)calloc(1, sizeof(struct orphan_mft));
@@ -673,29 +803,23 @@ stack_of:
 	while (!ntfs_list_empty(&ntfs_orphan_list)) {
 		of = ntfs_list_entry(ntfs_orphan_list.next, struct orphan_mft, list);
 
-		if (err) {
-			err = 0;
-			goto delete_inodes;
-		}
-
 		ni = ntfs_inode_open(vol, of->mft_no);
 		if (!ni)
-			goto delete_inodes;
+			goto delete_inode;
 
 		ctx = ntfs_attr_get_search_ctx(ni, NULL);
 		if (!ctx) {
 			ntfs_log_error("Failed to allocate attribute context\n");
-			goto delete_inodes;
+			goto delete_inode;
 		}
 
-		err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+		ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
 						CASE_SENSITIVE, 0, NULL, 0, ctx);
-		if (err) {
+		if (ret) {
 			/* $FILE_NAME lookup failed */
 			ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%llu)\n",
 					(unsigned long long)ni->mft_no);
-			err = 0;
-			goto delete_inodes;
+			goto delete_inode;
 		}
 
 		/* We know this will always be resident. */
@@ -708,13 +832,13 @@ stack_of:
 		 * Consider that the parent could be orphaned.
 		 */
 
-		/* TODO: modify condition for finding orphan file? */
 		if (!ntfsck_mft_bmp_bit_get(MREF(parent_no))) {
-			if (utils_mftrec_in_use(vol, MREF(parent_no))) {
+			if (check_mftrec_in_use(vol, MREF(parent_no), 1)) {
 				/*
-				 * Do not delete inode on orphan list
-				 * and check parent inode
-				 * */
+				 * Parent is also orphaned file!
+				 */
+
+				/* Do not delete ni on orphan list and check parent */
 				ntfs_attr_put_search_ctx(ctx);
 				ctx = NULL;
 				ntfs_inode_close(ni);
@@ -723,49 +847,19 @@ stack_of:
 			}
 
 			/*
-			 * Parent inode is deleted! Now delete sub-inodes of it.
-			 * TODO: Add inode whose parent inode was deleted,
-			 *	 to root directory.
+			 * Parent inode is deleted!
 			 */
 			ntfs_log_verbose("!! FOUND Deleted parent inode(%llu), inode(%llu)\n",
 					(unsigned long long)MREF(parent_no),
 					(unsigned long long)ni->mft_no);
 
-delete_inodes:
-			err = 0;
-
-			if (parent_ni) {
-				ntfs_inode_close(parent_ni);
-				parent_ni = NULL;
+			ret = ntfsck_add_inode_to_lostfound(ni, fn, ctx);
+			if (ret) {
+				ntfs_log_error("ntfsck_add_inode_to_lostfound %d\n", ret);
+				goto delete_inode;
 			}
 
-			if (ni) {
-				ntfsck_check_non_resident_cluster(ni, 0);
-				ntfsck_free_mft_records(vol, ni);
-			}
-			ntfs_list_del(&of->list);
-			free(of);
-
-			while (!ntfs_list_empty(&ntfs_orphan_list)) {
-				of = ntfs_list_entry(ntfs_orphan_list.next, struct orphan_mft, list);
-				ni = ntfs_inode_open(vol, of->mft_no);
-				if (!ni) {
-					ntfs_list_del(&of->list);
-					free(of);
-					err = -EIO;
-					continue;
-				}
-				ntfs_log_verbose("delete inode(%llu)\n",
-						(unsigned long long)ni->mft_no);
-
-				ntfsck_check_non_resident_cluster(ni, 0);
-				ntfsck_free_mft_records(vol, ni);
-				ntfs_list_del(&of->list);
-				free(of);
-			}
-
-			ntfs_attr_put_search_ctx(ctx);
-			return err;
+			goto next_inode;
 		}
 
 		/*
@@ -776,88 +870,43 @@ delete_inodes:
 			parent_ni = ntfs_inode_open(vol, MREF(parent_no));
 
 		if (parent_ni) {
-			int ret = -1;
 
 			/* Check parent inode */
 			if (ntfsck_check_directory(parent_ni)) {
-				ntfs_log_error("Failed to check parent directory(%lld) "
+				ntfs_log_error("Failed to check parent directory(%lld:%lld) "
 						"for repairing orphan inode\n",
+						(unsigned long long)parent_ni->mft_no,
 						(unsigned long long)ni->mft_no);
-				goto delete_inodes;
-			}
-
-			/* Add index for orphaned inode */
-			if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
-				ntfsck_initialize_index_attr(ni);
-
-				/*
-				 * fn pointer could be changed to invalid place after
-				 * resetting $IR and $IA. Re-lookup $FILE_NAME.
-				 */
-				ntfs_attr_reinit_search_ctx(ctx);
-				err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-						CASE_SENSITIVE, 0, NULL, 0, ctx);
-				if (err) {
-					/* $FILE_NAME lookup failed */
-					ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%llu)\n",
-							(unsigned long long)ni->mft_no);
-					err = 0;
-					goto delete_inodes;
+				/* parent is not normal, add to lost+found */
+				ret = ntfsck_add_inode_to_lostfound(ni, fn, ctx);
+				if (ret) {
+					ntfs_log_error("Failed to add inode(%llu) to %s\n",
+							(unsigned long long)ni->mft_no,
+							FILENAME_LOST_FOUND);
+					goto delete_inode;
 				}
-
-				fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
-						le16_to_cpu(ctx->attr->value_offset));
-
-				fn->allocated_size = 0;
-				fn->data_size = 0;
-				ni->allocated_size = 0;
-				ni->data_size = 0;
-				ntfs_inode_mark_dirty(ni);
+				goto next_inode;
 			}
 
-			ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
-			if (ret == STATUS_OK)
-				goto next_item;
-			else if (ret == STATUS_ERROR) {
-				err = -EIO;
-				ni = NULL;
-				goto delete_inodes;
-			}
-
-			/* Not found index for $FN */
-
-			err = ntfs_index_add_filename(parent_ni, fn,
-					MK_MREF(ni->mft_no,
-						le16_to_cpu(ni->mrec->sequence_number)));
-			if (err) {
-				ntfs_log_error("Failed to add index(%llu) to parent(%llu) "
-						"err(%d)\n",
+			ret = ntfsck_add_inode_to_parent(vol, parent_ni, ni, fn, ctx);
+			if (ret) {
+				ntfs_log_error("Failed to add inode(%llu) to parent(%llu)\n",
 						(unsigned long long)ni->mft_no,
-						(unsigned long long)parent_ni->mft_no, err);
-				err = -EIO;
-				goto delete_inodes;
+						(unsigned long long)parent_ni->mft_no);
+				goto delete_inode;
 			}
-
-			/* check again after adding $FN to index */
-			ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
-			if (ret != STATUS_OK) {
-				err = -EIO;
-				ni = NULL;
-				goto delete_inodes;
+		} else {
+			ret = ntfsck_add_inode_to_lostfound(ni, fn, ctx);
+			if (ret) {
+				ntfs_log_error("Failed to add inode(%llu) to %s\n",
+						(unsigned long long)ni->mft_no,
+						FILENAME_LOST_FOUND);
+				goto delete_inode;
 			}
+			/* goto next_inode */
+		}
 
-			ntfsck_mft_bmp_bit_set(ni->mft_no);
-
-			ntfsck_update_lcn_bitmap(ni);
-			/*
-			 * Recall ntfsck_update_lcn_bitmap() about parent_ni.
-			 * Because cluster can be allocated by adding index entry.
-			 */
-			ntfsck_update_lcn_bitmap(parent_ni);
-
-		} /* if (parent_ni) */
-
-next_item:
+next_inode:
 		if (ctx) {
 			ntfs_attr_put_search_ctx(ctx);
 			ctx = NULL;
@@ -877,7 +926,16 @@ next_item:
 		free(of);
 	} /* while (!ntfs_list_empty(&ntfs_orphan_list)) */
 
-	return err;
+	return ret;
+
+delete_inode:
+	if (ni) {
+		ntfsck_check_non_resident_cluster(ni, 0);
+		ntfsck_free_mft_records(vol, ni);
+		ni = NULL;
+	}
+	ret = 0;
+	goto next_inode;
 }
 
 static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
@@ -908,6 +966,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	ni = ntfs_inode_open(vol, mft_num);
 	is_used = ntfsck_mft_bmp_bit_get(mft_num);
+
 	/*
 	 * If !ni and is_used is true, This mft number is external mft.
 	 * In the base mft entry, this will already be checked, so there
@@ -938,7 +997,6 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			/* close inode to avoid nested call of ntfs_inode_open() */
 			ntfs_inode_close(ni);
 
-			/* TODO: Move orphan mft entry to lost+found directory */
 			if (ntfsck_add_index_entry_orphaned_file(vol, mft_no)) {
 				/*
 				 * error returned.
@@ -2499,6 +2557,7 @@ out:
 static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 {
 	ntfs_inode *ni;
+	ntfs_inode *lf_ni;	/* lost+found inode */
 	struct dir *dir;
 	INDEX_ROOT *ir;
 	INDEX_ENTRY *next;
@@ -2507,6 +2566,10 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	ntfs_attr *bm_na = NULL;
 	int ret;
 	COLLATION_RULES cr;
+
+	ntfschar *ucs_name = (ntfschar *)NULL;
+	int ucs_namelen;
+	u64 lf_mftno = (u64)-1; /* lost+found mft record number */
 
 	dir = (struct dir *)calloc(1, sizeof(struct dir));
 	if (!dir) {
@@ -2524,6 +2587,29 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	if (ntfsck_check_directory(ni)) {
 		ntfs_log_error("Root directory has corrupted.\n");
 		exit(-1);
+	}
+
+	/* find 'lost+found' directory in root directory */
+	lf_mftno = ntfs_inode_lookup_by_mbsname(ni, FILENAME_LOST_FOUND);
+	if (lf_mftno == (u64)-1) {
+		/* create 'lost+found' directory */
+		ucs_namelen = ntfs_mbstoucs(FILENAME_LOST_FOUND, &ucs_name);
+		if (ucs_namelen != -1) {
+			lf_ni = ntfs_create(ni, 0, ucs_name, ucs_namelen, S_IFDIR);
+		}
+		free(ucs_name);
+	} else {
+		lf_ni = ntfs_inode_open(vol, lf_mftno);
+	}
+
+	if (!lf_ni) {
+		ntfs_log_perror("Failed to convert '%s' to unicode",
+				FILENAME_LOST_FOUND);
+		ntfs_log_debug("Failed to open '%s' inode\n", FILENAME_LOST_FOUND);
+		/* do not return */
+	} else {
+		vol->lost_found = lf_ni->mft_no;
+		ntfs_inode_close(lf_ni);
 	}
 
 	dir->ni = ni;

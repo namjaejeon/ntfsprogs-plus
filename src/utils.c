@@ -771,9 +771,12 @@ int utils_cluster_in_use(ntfs_volume *vol, long long lcn)
 }
 
 /**
- * utils_mftrec_in_use - Determine if a MFT Record is in use
+ * check_mftrec_in_use - Determine if a MFT Record is in use
  * @vol:   An ntfs volume obtained from ntfs_mount
  * @mref:  MFT Reference (inode number)
+ * @force: flag for always reading from disk or using cache
+ *         1: read from disk
+ *         0: read from cache(buffer)
  *
  * The metadata file $BITMAP has one binary bit representing each record in the
  * MFT.  The bit will be set for each record that is in use.  The function
@@ -787,7 +790,7 @@ int utils_cluster_in_use(ntfs_volume *vol, long long lcn)
  *	    0  MFT Record is unused
  *	   -1  Error occurred
  */
-int utils_mftrec_in_use(ntfs_volume *vol, MFT_REF mref)
+int check_mftrec_in_use(ntfs_volume *vol, MFT_REF mref, int force)
 {
 	static u8 buffer[512];
 	static s64 bmpmref = -(sizeof(buffer) << 3) - 1; /* Which bit of $BITMAP is in the buffer */
@@ -801,8 +804,10 @@ int utils_mftrec_in_use(ntfs_volume *vol, MFT_REF mref)
 	}
 
 	/* Does mref lie in the section of $Bitmap we already have cached? */
-	if (((s64)MREF(mref) < bmpmref)
-	    || ((s64)MREF(mref) >= (s64)(bmpmref + (sizeof(buffer) << 3)))) {
+	if (force ||
+		((s64)MREF(mref) < bmpmref) ||
+		((s64)MREF(mref) >= (s64)(bmpmref + (sizeof(buffer) << 3)))) {
+
 		ntfs_log_debug("Bit lies outside cache.\n");
 
 		/* Mark the buffer as not in use, in case the read is shorter. */
@@ -824,6 +829,12 @@ int utils_mftrec_in_use(ntfs_volume *vol, MFT_REF mref)
 			byte, bit, buffer[byte] & bit);
 
 	return (buffer[byte] & bit);
+}
+
+/* for backward compatibility */
+int utils_mftrec_in_use(ntfs_volume *vol, MFT_REF mref)
+{
+	return check_mftrec_in_use(vol, mref, 0);
 }
 
 /**
