@@ -137,9 +137,9 @@ struct ntfsls_dirent {
 
 /* runlist allocated size: TODO move to runlist.c */
 struct rl_size {
-	s64 asize;	/* allocated size (include hole length) */
-	s64 real_asize;	/* real allocated size */
-	VCN vcn;	/* last valid vcn */
+	s64 alloc_size;		/* allocated size (include hole length) */
+	s64 real_size;		/* data size (real allocated size) */
+	VCN vcn;		/* last valid vcn */
 };
 
 NTFS_LIST_HEAD(ntfs_dirs_list);
@@ -497,8 +497,8 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 		struct rl_size *rls, BOOL lcnbmp_set)
 {
 	ntfs_volume *vol;
-	s64 rl_asize = 0;	/* rl allocated size (including HOLE length) */
-	s64 rl_real_asize = 0;	/* rl real allocated size */
+	s64 rl_alloc_size = 0;	/* rl allocated size (including HOLE length) */
+	s64 rl_data_size = 0;	/* rl data size (real allocated size) */
 	s64 rsize;		/* a cluster run size */
 	VCN valid_vcn = 0;
 	int i = 0;
@@ -521,16 +521,16 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 				ntfs_cluster_free_basic(vol, rl[i].lcn, rl[i].length);
 
 			rsize = rl[i].length << vol->cluster_size_bits;
-			rl_real_asize += rsize;
-			rl_asize += rsize;
+			rl_data_size += rsize;
+			rl_alloc_size += rsize;
 
 		} else if (rl[i].lcn == LCN_HOLE) {
 			rsize = rl[i].length << vol->cluster_size_bits;
-			rl_asize += rsize;
+			rl_alloc_size += rsize;
 		} else {
 			/* valid vcn until encountered < LCN_HOLE */
 			if (set_bit) {
-				valid_vcn = rl_asize >> vol->cluster_size_bits;
+				valid_vcn = rl_alloc_size >> vol->cluster_size_bits;
 				set_bit = 0;
 			}
 
@@ -543,12 +543,12 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 	}
 
 	if (!valid_vcn)
-		valid_vcn = rl_asize >> vol->cluster_size_bits;
+		valid_vcn = rl_alloc_size >> vol->cluster_size_bits;
 
 	if (rls) {
 		rls->vcn = valid_vcn;
-		rls->asize = rl_asize;
-		rls->real_asize = rl_real_asize;
+		rls->alloc_size = rl_alloc_size;
+		rls->real_size = rl_data_size;
 	}
 
 	return STATUS_OK;
@@ -1852,7 +1852,7 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls
 			 * keep a valid runlist as long as possible.
 			 * if truncate zero, call with second parameter to 0
 			 */
-			tr_size = rls.asize;
+			tr_size = rls.alloc_size;
 			if (ntfsck_truncate_attr(na, tr_size))
 				return STATUS_ERROR;
 
@@ -1862,12 +1862,12 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls
 
 #if 0
 	if (na->type != AT_DATA &&
-			((na->allocated_size != rls.data_size) ||
+			((na->allocated_size != rls.real_size) ||
 			 (na->data_size != na->initialized_size))) {
 		ntfs_log_info("attribute length fields and runlist length are different\n");
 		ntfs_log_info(" na: allocated_size(%ld:%ld), data_size(%ld:%ld), initialized_size(%ld)\n",
-				na->allocated_size, rls.data_size,
-				na->data_size, rls.asize,
+				na->allocated_size, rls.real_size,
+				na->data_size, rls.alloc_size,
 				na->initialized_size);
 		ntfs_log_info(" inode: allocated_size(%ld), data_size(%ld) flags(%08x)\n",
 				ni->allocated_size, ni->data_size, ni->flags & (FILE_ATTR_SPARSE_FILE|FILE_ATTR_COMPRESSED));
@@ -2001,12 +2001,14 @@ static int ntfsck_check_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol;
 	ntfs_attr *na = NULL;
-	FILE_ATTR_FLAGS si_flags; /* $STANDARD_INFORMATION flags */
 	struct rl_size rls = {0, };
 	int ret = 0;
+	FILE_ATTR_FLAGS si_flags; /* $STANDARD_INFORMATION flags */
+	FILE_ATTR_FLAGS si_cs_flags; /* $STD_INFO compressed-sparse flags */
+	ATTR_FLAGS cs_flags;      /* $DATA compressed-sparse flags */
 
 	if (!ni)
-		return -1;
+		return STATUS_ERROR;
 
 	vol = ni->vol;
 
@@ -2014,105 +2016,68 @@ static int ntfsck_check_file(ntfs_inode *ni)
 	if (!na) {
 		ntfs_log_perror("Failed to open $DATA of inode "
 				"%llu", (unsigned long long)ni->mft_no);
-		return -1;
+		return STATUS_ERROR;
 	}
 
 	if (NAttrNonResident(na)) {
+		/*
+		 * ntfsck_check_non_resident_attr() will set proper flags
+		 * and attribute structure in ntfs_attr_update_meta()
+		 * including compressed_size when sparse/compressed flags
+		 */
 		ntfsck_check_non_resident_attr(na, &rls);
-		/* TODO: checking $DATA attribute length for compressed_size */
 	} else {
-		rls.asize = na->data_size;
-		rls.real_asize = na->allocated_size;
+		rls.alloc_size = na->allocated_size;
+		rls.real_size = na->allocated_size;
 	}
 
 	si_flags = ni->flags;
+	si_cs_flags = si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED);
+	cs_flags = na->data_flags & (ATTR_IS_SPARSE | ATTR_IS_COMPRESSED);
 
-	/* check sparse/compressed file */
-	if (rls.real_asize != ((rls.asize + 7) & ~7)) {
-		/* check flags */
-		/* can't recognize SPARSE/COMPRESSED FILE using cluster run */
-		if (!(si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED)) ||
-			!(na->data_flags & (ATTR_IS_SPARSE | ATTR_IS_COMPRESSED))) {
-			check_failed("inode(%llu)'s $STD_INFO flag(%d) $DATA flag(%d)"
-					" does not set SPARSE or COMPRESSED",
-					(unsigned long long)ni->mft_no,
-					si_flags, na->data_flags);
+	if (cs_flags & ATTR_IS_SPARSE) {
+		/* sparse file */
+		if (!(si_cs_flags & FILE_ATTR_SPARSE_FILE)) {
+			check_failed("Sparse flags of $STD_INFO and DATA in inode(%llu) "
+					"are different. Set sparse to inode",
+					(unsigned long long)ni->mft_no);
 
-			/* if comression_block_size is not zero, attribute is comressed */
 			if (ntfsck_ask_repair(vol)) {
-				if (na->compression_block_size) {
-					si_flags &= ~FILE_ATTR_SPARSE_FILE;
-					ni->flags = si_flags |= FILE_ATTR_COMPRESSED;
-					na->data_flags &= ~ATTR_IS_SPARSE;
-					na->data_flags |= ATTR_IS_COMPRESSED;
-				} else {
-					si_flags &= ~FILE_ATTR_COMPRESSED;
-					ni->flags = si_flags |= FILE_ATTR_SPARSE_FILE;
-					na->data_flags &= ~ATTR_IS_COMPRESSED;
-					na->data_flags |= ATTR_IS_SPARSE;
-				}
-				ntfs_inode_mark_dirty(ni);
-				NInoFileNameSetDirty(ni);
-				fsck_err_fixed();
-			}
-		}
-
-		/* check size */
-		if ((ni->allocated_size != na->compressed_size) ||
-				(na->compressed_size != rls.real_asize)) {
-			/* need to set allocated_size & highest_vcn set */
-			check_failed("Corrupted inode(%llu) compressed size field.\n "
-					" inode allocated size(%llu),"
-					" $DATA compressed(%llu)"
-					" cluster run real allocation(%llu).",
-					(unsigned long long)ni->mft_no,
-					(unsigned long long)ni->allocated_size,
-					(unsigned long long)na->compressed_size,
-					(unsigned long long)rls.real_asize);
-			if (ntfsck_ask_repair(vol)) {
-				na->compressed_size = rls.real_asize;
-				ni->allocated_size = na->compressed_size;
-				ntfs_inode_mark_dirty(ni);
-				NInoFileNameSetDirty(ni);
-				fsck_err_fixed();
-			}
-		}
-	} else {
-		if ((si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED)) ||
-			(na->data_flags & (ATTR_IS_SPARSE | ATTR_IS_COMPRESSED))) {
-			check_failed("inode(%llu)'s $STD_INFO flag(%d) $DATA flag(%d)"
-					" set SPARSE or COMPRESSED",
-					(unsigned long long)ni->mft_no,
-					si_flags, na->data_flags);
-
-			/* if comression_block_size is not zero, attribute is comressed */
-			if (ntfsck_ask_repair(vol)) {
-				si_flags &= ~(FILE_ATTR_COMPRESSED | FILE_ATTR_SPARSE_FILE);
+				si_flags &= ~FILE_ATTR_COMPRESSED;
+				si_flags |= FILE_ATTR_SPARSE_FILE;
 				ni->flags = si_flags;
-				na->data_flags &= ~(ATTR_IS_COMPRESSED | ATTR_IS_SPARSE);
 
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
 				fsck_err_fixed();
 			}
 		}
+	} else if (cs_flags & ATTR_IS_COMPRESSED) {
+		if (!(si_cs_flags & FILE_ATTR_COMPRESSED)) {
+			check_failed("Compressed flags of $STD_INFO and DATA in inode(%llu) "
+					"are different. Set compressed to inode.",
+					(unsigned long long)ni->mft_no);
 
-
-		/* check size */
-		if ((ni->allocated_size != na->allocated_size) ||
-				(na->allocated_size != rls.real_asize)) {
-			check_failed("Corrupted inode(%llu) allocated size field.\n "
-					" inode allocated size(%llu),"
-					" $DATA allocated(%llu),"
-					" cluster run(total(%llu):real(%llu) allocation.",
-					(unsigned long long)ni->mft_no,
-					(unsigned long long)ni->allocated_size,
-					(unsigned long long)na->allocated_size,
-					(unsigned long long)rls.asize,
-					(unsigned long long)rls.real_asize);
 			if (ntfsck_ask_repair(vol)) {
-				na->allocated_size = rls.real_asize;
-				ni->allocated_size = na->allocated_size;
+				si_flags &= ~FILE_ATTR_SPARSE_FILE;
+				si_flags |= FILE_ATTR_COMPRESSED;
+				ni->flags = si_flags;
+
+				ntfs_inode_mark_dirty(ni);
+				NInoFileNameSetDirty(ni);
+				fsck_err_fixed();
+			}
+		}
+	} else if (!cs_flags) {
+		if (si_cs_flags) {
+			check_failed("Sparse/Compressed flags of $STD_INFO and DATA in inode(%llu) "
+					"are different. Clear flag of inode.",
+					(unsigned long long)ni->mft_no);
+
+			if (ntfsck_ask_repair(vol)) {
+				si_flags &= ~(FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED);
+				ni->flags = si_flags;
+
 				ntfs_inode_mark_dirty(ni);
 				NInoFileNameSetDirty(ni);
 				fsck_err_fixed();
