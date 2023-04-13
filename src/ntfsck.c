@@ -2617,6 +2617,25 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			goto err_continue;
 		}
 
+		if (next->ie_flags == INDEX_ENTRY_END) {
+			/*
+			 * 48 means sizeof(INDEX_ROOT) + sizeof(INDEX_ENTRY_HEADER).
+			 * If the flags of first entry is only INDEX_ENTRY_END,
+			 * which means directory is empty, The value_length of
+			 * resident entry should be 48. If It is bigger than
+			 * this value, Try to resize it!.
+			 */
+			if (ctx->attr->value_length != 48) {
+				check_failed("The value length of empty $IR(mft no : %lld) is invalid,"
+						"Resize it", (unsigned long long)dir->ni->mft_no);
+				if (ntfsck_ask_repair(vol)) {
+					ntfs_resident_attr_value_resize(ctx->mrec, ctx->attr, 48);
+					fsck_err_fixed();
+				}
+			}
+			goto next_dir;
+		}
+
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			next = ntfs_index_walk_down(next, ictx);
 			if (!next)
