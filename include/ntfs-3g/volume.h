@@ -396,6 +396,8 @@ extern int ntfs_set_shown_files(ntfs_volume *vol,
 		BOOL show_sys_files, BOOL show_hid_files, BOOL hide_dot_files);
 extern int ntfs_set_locale(void);
 extern int ntfs_set_ignore_case(ntfs_volume *vol);
+
+extern BOOL _ntfsck_ask_repair(const ntfs_volume *vol, BOOL flag);
 extern BOOL ntfsck_ask_repair(const ntfs_volume *vol);
 
 #endif /* defined _NTFS_VOLUME_H */

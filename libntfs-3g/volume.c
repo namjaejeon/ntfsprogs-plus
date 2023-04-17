@@ -2299,7 +2299,7 @@ err_out:
 	return err ? -1 : 0;
 }
 
-BOOL ntfsck_ask_repair(const ntfs_volume *vol)
+BOOL _ntfsck_ask_repair(const ntfs_volume *vol, BOOL flag)
 {
 	BOOL repair = FALSE;
 	char answer[8];
@@ -2323,6 +2323,13 @@ BOOL ntfsck_ask_repair(const ntfs_volume *vol)
 		} while (1);
 	}
 
-	ntfs_log_error(" (y/N)? %c\n", repair ? 'y' : 'N');
+	if (flag == TRUE)
+		ntfs_log_error(" (y/N)? %c\n", repair ? 'y' : 'N');
 	return repair;
 }
+
+BOOL ntfsck_ask_repair(const ntfs_volume *vol)
+{
+	return _ntfsck_ask_repair(vol, TRUE);
+}
+

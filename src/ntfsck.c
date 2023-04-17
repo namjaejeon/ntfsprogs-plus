@@ -288,6 +288,8 @@ static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
 static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 {
 	s64 pos = 0, wpos, i, count, written;
+	s64 clear_lcn_cnt = 0;
+	s64 set_lcn_cnt = 0;
 	BOOL backup_boot_check = FALSE, repair = FALSE;
 	u8 bm[NTFS_BUF_SIZE], *flb;
 
@@ -335,11 +337,15 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 					}
 
 					if (fsck_bmp_bit == 0 && lbmp_bit == 1) {
-						check_failed("Found orphaned cluster bit(%ld) in $Bitmap. Clear it", cl);
+						fsck_err_found();
+						clear_lcn_cnt++;
+						ntfs_log_trace("Found orphaned cluster bit(%ld) in $Bitmap. Clear it", cl);
 					} else {
-						check_failed("Found missing cluster bit(%ld) in $Bitmap. Set it", cl);
+						fsck_err_found();
+						set_lcn_cnt++;
+						ntfs_log_trace("Found missing cluster bit(%ld) in $Bitmap. Set it", cl);
 					}
-					if (ntfsck_ask_repair(vol)) {
+					if (_ntfsck_ask_repair(vol, FALSE)) {
 						ntfs_bit_set(bm, i * 8 + cl % 8, !lbmp_bit);
 						repair = TRUE;
 						fsck_err_fixed();
@@ -357,8 +363,11 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 		}
 	}
 
-	fsck_end_step();
+	ntfs_log_info("Total lcn bitmap clear:%lld, Total missing lcn bitmap:%lld\n",
+			(unsigned long long)clear_lcn_cnt,
+			(unsigned long long)set_lcn_cnt);
 
+	fsck_end_step();
 }
 
 static void ntfsck_set_bitmap_range(u8 *bm, s64 pos, s64 length, u8 bit)
@@ -938,6 +947,7 @@ delete_inode:
 	goto next_inode;
 }
 
+int clear_mft_cnt;
 static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	int is_used;
@@ -976,14 +986,17 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		return;
 
 	if (!ni) {
-		check_failed("Clear the bit of mft no(%ld) in the $MFT/$BITMAP corresponding orphaned MFT record",
-				mft_num);
-		if (ntfsck_ask_repair(vol)) {
+		fsck_err_found();
+		ntfs_log_trace("Clear the bit of mft no(%lld) "
+				"in the $MFT/$BITMAP corresponding orphaned MFT record",
+				(unsigned long long)mft_num);
+		if (_ntfsck_ask_repair(vol, FALSE)) {
 			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
 				ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n",
 						errno);
 				return;
 			}
+			clear_mft_cnt++;
 			fsck_err_fixed();
 		}
 		return;
@@ -2772,6 +2785,8 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++) {
 		ntfsck_verify_mft_record(vol, mft_num);
 	}
+
+	ntfs_log_info("Clear MFT bitmap count:%lld\n", (unsigned long long)clear_mft_cnt);
 
 	/*
 	 * $MFT could be updated after reviving orphaned mft entries.
