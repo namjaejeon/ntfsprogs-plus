@@ -537,6 +537,7 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 
 			rl[i].lcn = LCN_ENOENT;
 			rl[i].length = 0;
+			break;
 		}
 
 		i++;
