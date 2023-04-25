@@ -795,6 +795,7 @@ runlist_element *ntfs_mapping_pairs_decompress_i(const ntfs_volume *vol,
 	LCN lcn;		/* Current lcn. */
 	s64 deltaxcn;		/* Change in [vl]cn. */
 	runlist_element *rl;	/* The output runlist. */
+	runlist_element *temp_rl; /* for free when error occurred */
 	const u8 *buf;		/* Current position in mapping pairs array. */
 	const u8 *attr_end;	/* End of attribute. */
 	int err, rlsize;	/* Size of runlist buffer. */
@@ -1019,12 +1020,26 @@ mpa_err:
 		return rl;
 	}
 	/* Now combine the new and old runlists checking for overlaps. */
-	if (rl[0].length)
+	if (rl[0].length) {
+		/*
+		 * rl freed in ntfs_runlists_merge() when success,
+		 * but in case of failure, nothing to free.
+		 * should handle this case.
+		 */
+		temp_rl = old_rl;
 		old_rl = ntfs_runlists_merge(old_rl, rl);
-	else
+		if (!old_rl) {
+			if (NVolIsOnFsck(vol))
+				goto err_out_fsck;
+			else
+				free(temp_rl);
+		}
+	} else
 		free(rl);
+
 	if (old_rl)
 		return old_rl;
+
 	err = errno;
 	free(rl);
 	ntfs_log_error("Failed to merge runlists.\n");
@@ -1046,10 +1061,20 @@ err_out:
 		rl[rlpos].length = (s64)0;
 
 		if (old_rl && old_rl[0].length && rl[0].length) {
-			/* 'rl' freed in ntfs_runlists_merge() */
+			/*
+			 * rl freed in ntfs_runlists_merge() when success,
+			 * but in case of failure, nothing to free.
+			 * should handle this case.
+			 */
+			temp_rl = old_rl;
 			old_rl = ntfs_runlists_merge(old_rl, rl);
 			if (old_rl)
 				rl = old_rl;
+			else {
+err_out_fsck:
+				free(rl);
+				rl = temp_rl;
+			}
 		}
 		ntfs_debug_runlist_dump(rl);
 
