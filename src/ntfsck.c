@@ -742,7 +742,6 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	/* check again after adding $FN to index */
 	ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
 	if (ret != STATUS_OK) {
-		errno = -EIO;
 		err = -EIO;
 		/* TODO: I don't know what should be done ??? */
 		return STATUS_ERROR;
@@ -1531,7 +1530,6 @@ static runlist *_ntfsck_decompose_runlist(ntfs_attr_search_ctx *actx,
 
 	vol = actx->ntfs_ino->vol;
 	if (!vol || !actx->attr) {
-		errno = EINVAL;
 		return NULL;
 	}
 
@@ -1592,29 +1590,30 @@ static runlist *_ntfsck_decompose_runlist(ntfs_attr_search_ctx *actx,
  *
  * Return NULL if it failed to make runlist noramlly.
  * need_fix value is valid only when return success.
+ *
+ * this function refer to ntfs_attr_map_whole_runlist()
  */
 
 static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 {
 	ntfs_volume *vol;
 	ntfs_inode *ni;
+	ntfs_attr_search_ctx *actx;
 	VCN next_vcn, last_vcn, highest_vcn;
 	ATTR_RECORD *attr = NULL;
 	runlist *rl = NULL;
-	ntfs_attr_search_ctx *actx;
+	int not_mapped;
+	int err;
 
-	if (!na || !na->ni) {
-		errno = EINVAL;
+	if (!na || !na->ni)
 		return NULL;
-	}
+
 	ni = na->ni;
 	vol = ni->vol;
 
 	actx = ntfs_attr_get_search_ctx(ni, NULL);
-	if (!actx) {
-		errno = ENOMEM;
+	if (!actx)
 		return NULL;
-	}
 
 	next_vcn = last_vcn = highest_vcn = 0;
 	/* There can be multiple attributes in a inode */
@@ -1622,7 +1621,7 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		runlist *temp_rl = NULL;
 		if (ntfs_attr_lookup(na->type, na->name, na->name_len, CASE_SENSITIVE,
 					next_vcn, NULL, 0, actx)) {
-			errno = ENOENT;
+			err = ENOENT;
 			break;
 		}
 
@@ -1633,16 +1632,23 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 			continue;
 		}
 
+		not_mapped = 0;
+		if (ntfs_rl_vcn_to_lcn(na->rl, next_vcn) == LCN_RL_NOT_MAPPED)
+			not_mapped = 1;
+
 		temp_rl = rl;
 
-		rl = _ntfsck_decompose_runlist(actx, temp_rl, need_fix);
+		if (not_mapped) {
+			rl = _ntfsck_decompose_runlist(actx, temp_rl, need_fix);
+			na->rl = rl;
+		}
 
 		if (!next_vcn) {
 			if (attr->lowest_vcn) {
 				check_failed("inode(%llu)'s first $DATA"
 						" lowest_vcn is not zero",
 						(unsigned long long)ni->mft_no);
-				errno = EIO;
+				err = EIO;
 				/* should fix attribute's lowest_vcn */
 				if (ntfsck_ask_repair(vol)) {
 					attr->lowest_vcn = 0;
@@ -1651,13 +1657,17 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 				}
 				break;
 			}
+
+			/* Get the last vcn in the attribute. */
+			last_vcn = sle64_to_cpu(attr->allocated_size) >>
+					vol->cluster_size_bits;
 		}
 
 		highest_vcn = sle64_to_cpu(attr->highest_vcn);
 		next_vcn = highest_vcn + 1;
 
 		if (next_vcn <= 0) {
-			errno = ENOENT;
+			err = ENOENT;
 			break;
 		}
 
@@ -1666,10 +1676,22 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 			ntfs_log_error("Inode %llu has corrupt attribute list\n",
 					(unsigned long long)ni->mft_no);
 			/* TODO: how attribute list repair ?? */
-			errno = EIO;
+			err = EIO;
 			break;
 		}
 	}
+
+	if (err == ENOENT)
+		NAttrSetFullyMapped(na);
+
+	if (highest_vcn != last_vcn - 1) {
+		ntfs_log_error("highest_vcn and last_vcn of attr(%x) "
+				"of inode(%llu) : highest_vcn(0x%llx) last_vcn(0x%llx)\n",
+				na->type, (unsigned long long)na->ni->mft_no,
+				(long long)highest_vcn, (long long)last_vcn);
+		*need_fix = TRUE;
+	}
+
 	na->rl = rl;
 
 	ntfs_attr_put_search_ctx(actx);
@@ -1798,8 +1820,6 @@ static int ntfsck_decompose_setbit_runlist(ntfs_attr *na, struct rl_size *rls,
 	if (ret)
 		return STATUS_ERROR;
 
-	/* TODO: size fields checking */
-
 #ifdef _DEBUG
 	ntfs_log_info("After (%lld) =========================\n",
 			(unsigned long long)na->ni->mft_no);
@@ -1808,12 +1828,10 @@ static int ntfsck_decompose_setbit_runlist(ntfs_attr *na, struct rl_size *rls,
 	return 0;
 }
 
-static int ntfsck_truncate_attr(ntfs_attr *na, s64 new_size)
+static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size)
 {
-	na->allocated_size = new_size;
-
 	/* apply rl to disk */
-	NAttrSetFullyMapped(na);
+	na->allocated_size = new_size;
 	if (ntfs_attr_update_mapping_pairs(na, 0)) {
 		ntfs_log_error("Failed to update mapping pairs of "
 				"inode(%llu)\n",
@@ -1821,10 +1839,20 @@ static int ntfsck_truncate_attr(ntfs_attr *na, s64 new_size)
 		return -1;
 	}
 
-	if (ntfs_attr_truncate(na, na->allocated_size)) {
-		ntfs_log_error("Failed to truncate file\n");
-		return -1;
+	/* Update data size in the index. */
+	if (na->ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
+		if (na->type == AT_INDEX_ROOT && na->name == NTFS_INDEX_I30) {
+			na->ni->data_size = na->data_size;
+			na->ni->allocated_size = na->allocated_size;
+			set_nino_flag(na->ni, KnownSize);
+		}
+	} else {
+		if (na->type == AT_DATA && na->name == AT_UNNAMED) {
+			na->ni->data_size = na->data_size;
+			NInoFileNameSetDirty(na->ni);
+		}
 	}
+
 	return 0;
 }
 
@@ -1852,50 +1880,22 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls
 	/* if need_fix is set to TRUE, apply modified runlist to cluster runs */
 	if (need_fix == TRUE) {
 		check_failed("Non-resident cluster run of inode(%lld:%d) "
-				"corrupted. truncate it",
-				(unsigned long long)ni->mft_no, na->type);
+				"corrupted. rl_size(%llx:%llx). Truncate it",
+				(unsigned long long)ni->mft_no, na->type,
+				(unsigned long long)rls.alloc_size,
+				(unsigned long long)rls.real_size);
 
 		if (ntfsck_ask_repair(vol)) {
-			s64 tr_size;
-
 			/*
 			 * keep a valid runlist as long as possible.
 			 * if truncate zero, call with second parameter to 0
 			 */
-			tr_size = rls.alloc_size;
-			if (ntfsck_truncate_attr(na, tr_size))
+			if (ntfsck_update_runlist(na, rls.alloc_size))
 				return STATUS_ERROR;
 
 			fsck_err_fixed();
 		}
 	}
-
-#if 0
-	if (na->type != AT_DATA &&
-			((na->allocated_size != rls.real_size) ||
-			 (na->data_size != na->initialized_size))) {
-		ntfs_log_info("attribute length fields and runlist length are different\n");
-		ntfs_log_info(" na: allocated_size(%ld:%ld), data_size(%ld:%ld), initialized_size(%ld)\n",
-				na->allocated_size, rls.real_size,
-				na->data_size, rls.alloc_size,
-				na->initialized_size);
-		ntfs_log_info(" inode: allocated_size(%ld), data_size(%ld) flags(%08x)\n",
-				ni->allocated_size, ni->data_size, ni->flags & (FILE_ATTR_SPARSE_FILE|FILE_ATTR_COMPRESSED));
-
-	}
-
-	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
-		if (na->type == AT_INDEX_ROOT && na->name == NTFS_INDEX_I30) {
-			ni->data_size = na->data_size;
-			ni->allocated_size = na->allocated_size;
-		}
-	} else {
-		if (na->type == AT_DATA && na->name == AT_UNNAMED) {
-			ni->data_size = na->data_size;
-			NInoFileNameSetDirty(na->ni);
-		}
-	}
-#endif
 
 	if (out_rls)
 		memcpy(out_rls, &rls, sizeof(struct rl_size));
@@ -1956,8 +1956,6 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 		goto init_all;
 	}
 
-	ntfsck_check_non_resident_attr(ia_na, NULL);
-
 	ntfs_attr_close(ia_na);
 	ia_na = NULL;
 
@@ -1980,9 +1978,6 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 			goto out;
 		}
 	}
-
-	if (NAttrNonResident(bm_na))
-		ntfsck_check_non_resident_attr(bm_na, NULL);
 
 check_next:
 	/* TODO: need to check flag & size in na ? */
@@ -2011,7 +2006,6 @@ static int ntfsck_check_file(ntfs_inode *ni)
 {
 	ntfs_volume *vol;
 	ntfs_attr *na = NULL;
-	struct rl_size rls = {0, };
 	int ret = 0;
 	FILE_ATTR_FLAGS si_flags; /* $STANDARD_INFORMATION flags */
 	FILE_ATTR_FLAGS si_cs_flags; /* $STD_INFO compressed-sparse flags */
@@ -2029,17 +2023,13 @@ static int ntfsck_check_file(ntfs_inode *ni)
 		return STATUS_ERROR;
 	}
 
-	if (NAttrNonResident(na)) {
-		/*
-		 * ntfsck_check_non_resident_attr() will set proper flags
-		 * and attribute structure in ntfs_attr_update_meta()
-		 * including compressed_size when sparse/compressed flags
-		 */
-		ntfsck_check_non_resident_attr(na, &rls);
-	} else {
-		rls.alloc_size = na->allocated_size;
-		rls.real_size = na->allocated_size;
-	}
+	/*
+	 * ntfsck_check_non_resident_attr(), which has already been called
+	 * in ntfsck_check_inode(), will set appropriate flag
+	 * and fields of attribute structure at ntfs_attr_update_meta(),
+	 * that is also including compressed_size
+	 * in case that sparse/compressed flags set.
+	 */
 
 	si_flags = ni->flags;
 	si_cs_flags = si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED);
@@ -2128,6 +2118,152 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni)
 	return STATUS_OK;
 }
 
+/*
+ * check all cluster runlist of non-resident attributes of a inode
+ */
+static int ntfsck_check_inode_non_resident(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	ntfs_attr *na;
+	ATTR_RECORD *a;
+	int ret = STATUS_OK;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+
+	while (!ntfs_attrs_walk(ctx)) {
+		a = ctx->attr;
+		if (!a->non_resident)
+			continue;
+
+		na = ntfs_attr_open(ni, a->type,
+				(ntfschar *)((u8 *)a + le16_to_cpu(a->name_offset)),
+				a->name_length);
+		if (!na) {
+			ntfs_log_perror("Can't open attribute(%d) of inode(%llu)\n",
+					a->type, (unsigned long long)ni->mft_no);
+			ntfs_attr_put_search_ctx(ctx);
+			return STATUS_ERROR;
+		}
+
+		ret = ntfsck_check_non_resident_attr(na, NULL);
+		ntfs_attr_close(na);
+	}
+
+	ntfs_attr_put_search_ctx(ctx);
+	return ret;
+}
+
+static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
+{
+	ntfs_inode *ni;
+
+	ATTR_TYPES type;
+	ATTR_LIST_ENTRY *al_entry;
+	ATTR_LIST_ENTRY *next_al_entry;
+	u16 al_length = 0;
+	u16 al_real_length = 0;
+	u8 *al_start;
+	u8 *al_end;
+	u8 *next_al_end = 0;
+	int ret = STATUS_OK;
+
+	ni = ctx->ntfs_ino;
+	if (ctx->base_ntfs_ino && ni != ctx->base_ntfs_ino)
+		return STATUS_ERROR;
+
+	al_start = ni->attr_list;
+	al_end = al_start + ni->attr_list_size;
+	al_entry = (ATTR_LIST_ENTRY *)ni->attr_list;
+
+	do {
+		type = al_entry->type;
+
+		if (type != AT_STANDARD_INFORMATION &&
+			type != AT_FILE_NAME &&
+			type != AT_OBJECT_ID &&
+			type != AT_SECURITY_DESCRIPTOR &&
+			type != AT_VOLUME_NAME &&
+			type != AT_VOLUME_INFORMATION &&
+			type != AT_DATA &&
+			type != AT_INDEX_ROOT &&
+			type != AT_INDEX_ALLOCATION &&
+			type != AT_BITMAP &&
+			type != AT_REPARSE_POINT &&
+			type != AT_EA_INFORMATION &&
+			type != AT_EA &&
+			type != AT_PROPERTY_SET &&
+			type != AT_LOGGED_UTILITY_STREAM) {
+
+			/* attrlist is corrupted */
+			ret = STATUS_ERROR;
+			goto out;
+		}
+
+		al_length = le16_to_cpu(al_entry->length);
+		if (al_length == 0 || al_length & 7) {
+			ret = STATUS_ERROR;
+			goto out;
+		}
+
+		al_real_length += al_length;
+		next_al_entry =
+			(ATTR_LIST_ENTRY *)((u8 *)al_entry + al_length);
+
+		if ((u8 *)next_al_entry >= al_end)
+			break;
+
+		next_al_end = (u8 *)next_al_entry + le16_to_cpu(next_al_entry->length);
+		if (next_al_end > al_end)
+			break;
+
+		al_entry = next_al_entry;
+	} while (1);
+
+out:
+	if (ni->attr_list_size != al_real_length) {
+		check_failed("Attr_list length(%x:%x) of inode(%llu) is corrupted",
+				ni->attr_list_size, al_real_length,
+				(unsigned long long)ni->mft_no);
+		if (ntfsck_ask_repair(ni->vol)) {
+			ntfs_set_attribute_value_length(ctx->attr, al_real_length);
+			ni->attr_list_size = al_real_length;
+			if (!errno) {
+				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
+			}
+		}
+	}
+
+	return ret;
+}
+
+static int ntfsck_check_attr_list(ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	int ret = STATUS_OK;
+
+	if (!ni->attr_list)
+		return STATUS_ERROR;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+
+	if (ntfs_attr_lookup(AT_ATTRIBUTE_LIST, AT_UNNAMED, 0, CASE_SENSITIVE,
+				0, NULL, 0, ctx)) {
+		ret = STATUS_ERROR;
+		goto out;
+	}
+
+	_ntfsck_check_attr_list_type(ctx);
+
+out:
+	ntfs_attr_put_search_ctx(ctx);
+	return ret;
+}
+
 static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx)
 {
@@ -2135,34 +2271,43 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	int32_t flags;
 	int ret;
 
-	ntfs_inode_attach_all_extents(ni);
+	if (ni->attr_list) {
+		ret = ntfsck_check_attr_list(ni);
+		if (ret)
+			goto err_out;
+
+		ntfs_inode_attach_all_extents(ni);
+	}
+
+	ret = ntfsck_check_inode_non_resident(ni);
+	if (ret)
+		goto err_out;
 
 	/* Check file type */
 	flags = ntfsck_check_file_type(ni, ictx, ie_fn);
 	if (flags < 0)
-		goto remove_index;
+		goto err_out;
 
 	if (flags & FILE_ATTR_I30_INDEX_PRESENT) {
 		ret = ntfsck_check_directory(ni);
 		if (ret)
-			goto remove_index;
+			goto err_out;
 	} else {
 		ret = ntfsck_check_file(ni);
 		if (ret)
-			goto remove_index;
+			goto err_out;
 	}
 
 	/* check $FILE_NAME */
 	ret = ntfsck_check_file_name_attr(ni, ie_fn, ictx);
 	if (ret < 0)
-		goto remove_index;
+		goto err_out;
 
 	ntfsck_set_mft_record_bitmap(ni);
 	return STATUS_OK;
 
-remove_index:
+err_out:
 	return STATUS_ERROR;
-
 }
 
 /*
@@ -2216,8 +2361,14 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 				goto remove_index;
 			}
 		} else {
-			/* for inode whose parent inode is system files */
-			ntfs_inode_attach_all_extents(ni);
+			if (ni->attr_list) {
+				ret = ntfsck_check_attr_list(ni);
+
+				/* for inode whose parent inode is system files */
+				ntfs_inode_attach_all_extents(ni);
+			}
+			ret = ntfsck_check_inode_non_resident(ni);
+
 			ntfsck_set_mft_record_bitmap(ni);
 		}
 
@@ -2553,7 +2704,13 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 		goto err_out;
 	}
 
-	ntfs_inode_attach_all_extents(ni);
+	if (ni->attr_list) {
+		if (ntfsck_check_attr_list(ni))
+			goto err_out;
+
+		ntfs_inode_attach_all_extents(ni);
+	}
+	ntfsck_check_inode_non_resident(ni);
 
 	if (ntfsck_check_directory(ni)) {
 		ntfs_log_error("Root directory has corrupted.\n");

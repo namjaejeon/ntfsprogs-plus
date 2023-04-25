@@ -131,8 +131,25 @@ s64 ntfs_get_attribute_value_length(const ATTR_RECORD *a)
 	errno = 0;
 	if (a->non_resident)
 		return sle64_to_cpu(a->data_size);
-	
+
 	return (s64)le32_to_cpu(a->value_length);
+}
+
+void ntfs_set_attribute_value_length(ATTR_RECORD *a, s64 length)
+{
+	if (!a) {
+		errno = EINVAL;
+		return;
+	}
+	errno = 0;
+	if (a->non_resident) {
+		a->data_size = cpu_to_sle64(length);
+		a->allocated_size = cpu_to_sle64((length + 7) & ~7);
+		a->initialized_size = cpu_to_sle64(length);
+		return;
+	}
+
+	a->value_length = cpu_to_le32(length);
 }
 
 BOOL ntfs_is_valid_attr_type(const ATTR_RECORD *a)

@@ -367,6 +367,13 @@ extern int ntfs_attr_truncate_solid(ntfs_attr *na, const s64 newsize);
 extern s64 ntfs_get_attribute_value_length(const ATTR_RECORD *a);
 
 /**
+ * set_attribute_value_length - set the length of attribute
+ * @a : pointer to a buffer containing the attribute reocrd
+ * @length : length to set
+ */
+extern void ntfs_set_attribute_value_length(ATTR_RECORD *a, s64 length);
+
+/**
  * get_attribute_value - return the attribute value of an attribute
  * @vol:	volume on which the attribute is present
  * @a:		attribute to get the value of

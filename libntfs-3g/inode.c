@@ -725,6 +725,11 @@ int ntfs_inode_attach_all_extents(ntfs_inode *ni)
 			}
 			prev_attached = MREF_LE(ale->mft_reference);
 		}
+
+		/* to prevent infinite loop */
+		if (le16_to_cpu(ale->length) == 0)
+			return -1;
+
 		ale = (ATTR_LIST_ENTRY *)((u8*)ale + le16_to_cpu(ale->length));
 	}
 	return 0;
