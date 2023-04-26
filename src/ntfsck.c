@@ -655,7 +655,7 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 
 		if (ntfsck_check_inode(ni, ictx->entry, ictx)) {
 			/* Inode check failed, remove index and inode */
-			ntfs_log_info("Failed to check inode(%lld) "
+			ntfs_log_error("Failed to check inode(%lld) "
 					"for repairing orphan inode\n",
 					(unsigned long long)ni->mft_no);
 
@@ -1142,7 +1142,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 {
 	ntfs_volume *vol = ni->vol;
 	char *filename;
-	int ret = 0;
+	int ret = STATUS_OK;
 	BOOL need_fix = FALSE;
 	FILE_NAME_ATTR *fn;
 	ntfs_attr_search_ctx *actx;
@@ -1154,7 +1154,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 	actx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!actx)
-		return -ENOMEM;
+		return STATUS_ERROR;
 
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 
@@ -1163,7 +1163,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		/* NOT FOUND MFT/$FN */
 		ntfs_log_error("Filename(%s) in INDEX ENTRY is not found in inode(%llu)\n",
 				filename, (unsigned long long)ni->mft_no);
-		ret = -1;
+		ret = STATUS_ERROR;
 		goto out;
 	}
 
@@ -1177,28 +1177,18 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 #endif
 
 	/* check parent MFT reference */
-	if (ie_fn->parent_directory != fn->parent_directory) {
-		if (mft_pdir != ictx->ni->mft_no) {
-			/* parent MFT entry is not matched! Remove this IDX/$FN */
-			ntfs_log_error("Parent MFT(%llu) entry is not matched "
-					"MFT/$FN's parent MFT(%llu:%s)",
-					(unsigned long long)ictx->ni->mft_no,
-					(unsigned long long)MREF(ie_fn->parent_directory),
-					filename);
-			ret = -1;
-			goto out;
-		}
-
-		if (idx_pdir != mft_pdir || idx_pdir_seq != mft_pdir_seq) {
+	if (idx_pdir != mft_pdir ||
+		idx_pdir_seq != mft_pdir_seq ||
+		mft_pdir != ictx->ni->mft_no) {
 			ntfs_log_error("Parent MFT reference is differnt "
-					"(IDX/$FN:%u-%llu MFT/$FN:%u-%llu) "
-					"on inode(%llu, %s)",
-					idx_pdir_seq, (unsigned long long)idx_pdir,
-					mft_pdir_seq, (unsigned long long)mft_pdir,
-					(unsigned long long)ni->mft_no, filename);
-			ret = -1;
+					"(IDX/$FN:%llu-%u MFT/$FN:%llu-%u) "
+					"on inode(%llu, %s), parent(%llu)\n",
+					(unsigned long long)idx_pdir, idx_pdir_seq,
+					(unsigned long long)mft_pdir, mft_pdir_seq,
+					(unsigned long long)ni->mft_no, filename,
+					(unsigned long long)ictx->ni->mft_no);
+			ret = STATUS_ERROR;
 			goto out;
-		}
 	}
 
 	/*
@@ -1219,7 +1209,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 					"MFT/$REPARSE_POINT attribute on inode(%llu:%s)",
 					(unsigned long long)ni->mft_no, filename);
 			ntfs_attr_put_search_ctx(_ctx);
-			ret = -1;
+			ret = STATUS_ERROR;
 			goto out;
 		}
 
@@ -1254,7 +1244,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 		if (!(ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT)) {
 			check_failed("MFT flag set as directory, but MFT/$FN flag "
-					"of inode(%llu:%s) is not set!",
+					"of inode(%llu:%s) is not set! Fix it.",
 					(unsigned long long)ni->mft_no, filename);
 			if (ntfsck_ask_repair(vol)) {
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
@@ -1269,7 +1259,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		if (ie_fn->allocated_size != 0 || ie_fn->data_size != 0 ||
 				ni->allocated_size != 0 || ni->data_size != 0) {
 			check_failed("Directory(%llu:%s) has non-zero "
-					"length(ie:%llu,%llu, ni:%llu,%llu)",
+					"length(ie:%llu,%llu, ni:%llu,%llu). Fix it.",
 					(unsigned long long)ni->mft_no, filename,
 					(unsigned long long)ie_fn->allocated_size,
 					(unsigned long long)ie_fn->data_size,
@@ -1301,7 +1291,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	/* check $FN size fields */
 	if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
 		check_failed("Allocated size is different "
-				"(IDX/$FN:%llu MFT/$DATA:%llu) on inode(%llu, %s)",
+				"(IDX/$FN:%llu MFT/$DATA:%llu) on inode(%llu, %s). Fix it.",
 				(unsigned long long)sle64_to_cpu(ie_fn->allocated_size),
 				(unsigned long long)ni->allocated_size,
 				(unsigned long long)ni->mft_no, filename);
@@ -1314,7 +1304,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 */
 	if (ni->data_size != ie_fn->data_size) {
 		check_failed("Data size is different "
-				"(IDX/$FN:%llu MFT/$DATA:%llu) on inode(%llu, %s)",
+				"(IDX/$FN:%llu MFT/$DATA:%llu) on inode(%llu, %s). Fix it.",
 				(unsigned long long)sle64_to_cpu(ie_fn->data_size),
 				(unsigned long long)ni->data_size,
 				(unsigned long long)ni->mft_no, filename);
@@ -1329,8 +1319,6 @@ fix_index:
 		if (ntfsck_ask_repair(vol)) {
 			ntfs_inode_mark_dirty(ni);
 			NInoFileNameSetDirty(ni);
-
-			ie_fn->parent_directory = fn->parent_directory;
 
 			ie_fn->allocated_size = cpu_to_sle64(ni->allocated_size);
 			ie_fn->data_size = cpu_to_sle64(ni->data_size);
@@ -1412,7 +1400,7 @@ static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
  * and check flags related it.
  *
  * return index entry's flag if checked normally.
- * else return -1.
+ * else return STATUS_ERROR.
  *
  */
 static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
@@ -1836,7 +1824,7 @@ static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size)
 		ntfs_log_error("Failed to update mapping pairs of "
 				"inode(%llu)\n",
 				(unsigned long long)na->ni->mft_no);
-		return -1;
+		return STATUS_ERROR;
 	}
 
 	/* Update data size in the index. */
@@ -1853,7 +1841,7 @@ static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size)
 		}
 	}
 
-	return 0;
+	return STATUS_OK;
 }
 
 static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls)
@@ -2335,15 +2323,15 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	ntfs_inode *ni;
 	struct dir *dir;
 	MFT_REF mref;
-	int ret = 0;
+	int ret = STATUS_OK;
 	FILE_NAME_ATTR *ie_fn = &ie->key.file_name;
 
 	if (!ie)
-		return -1;
+		return STATUS_ERROR;
 
 	mref = le64_to_cpu(ie->indexed_file);
 	if (MREF(mref) == FILE_root)
-		return 0;
+		return STATUS_OK;
 
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 	ntfs_log_verbose("ntfsck_check_index %ld, %s\n", MREF(mref), filename);
@@ -2354,7 +2342,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		if (!(ni->flags & FILE_ATTR_SYSTEM)) {
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret) {
-				ntfs_log_info("ntfsck_check_inode(%llu) failed\n",
+				ntfs_log_info("Failed to check inode(%llu) with index tree.\n",
 						(unsigned long long)ni->mft_no);
 
 				ntfs_inode_close(ni);
@@ -2377,8 +2365,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			dir = (struct dir *)calloc(1, sizeof(struct dir));
 			if (!dir) {
 				ntfs_log_error("Failed to allocate for subdir.\n");
-				ret = -1;
 				ntfs_inode_close(ni);
+				ret = STATUS_ERROR;
 				goto err_out;
 			}
 
@@ -2390,7 +2378,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	} else {
 
 remove_index:
-		check_failed("mft entry(%llu:%s) is corrupted, Removing index entry from parent(%llu)",
+		check_failed("Index entry(%llu:%s) "
+				"is corrupted, Removing index entry from parent(%llu)",
 				(unsigned long long)MREF(mref), filename,
 				(unsigned long long)MREF_LE(ie_fn->parent_directory));
 		if (ntfsck_ask_repair(vol)) {
@@ -2402,7 +2391,7 @@ remove_index:
 			} else {
 				ntfs_log_verbose("Index entry of inode(%llu:%s) is deleted\n",
 						(unsigned long long)MREF(mref), filename);
-				ret = 1;
+				ret = STATUS_FIXED;
 				fsck_err_fixed();
 			}
 			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
@@ -2714,7 +2703,7 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 
 	if (ntfsck_check_directory(ni)) {
 		ntfs_log_error("Root directory has corrupted.\n");
-		exit(-1);
+		exit(STATUS_ERROR);
 	}
 
 	ntfsck_set_mft_record_bitmap(ni);
@@ -2956,7 +2945,7 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 	le16 flags;
 
 	if (!(vol->flags | VOLUME_IS_DIRTY))
-		return 0;
+		return STATUS_OK;
 
 	ntfs_log_verbose("Resetting dirty flag.\n");
 
@@ -2964,7 +2953,7 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 
 	if (ntfs_volume_write_flags(vol, flags)) {
 		ntfs_log_error("Error setting volume flags.\n");
-		return -1;
+		return STATUS_ERROR;
 	}
 	return 0;
 }
@@ -2978,11 +2967,11 @@ static int ntfsck_replay_log(ntfs_volume *vol __attribute__((unused)))
 	 */
 	if (ntfs_logfile_reset(vol)) {
 		check_failed("ntfs logfile reset failed, errno : %d\n", errno);
-		return -1;
+		return STATUS_ERROR;
 	}
 
 	fsck_end_step();
-	return 0;
+	return STATUS_OK;
 }
 
 static ntfs_volume *ntfsck_mount(const char *path __attribute__((unused)),

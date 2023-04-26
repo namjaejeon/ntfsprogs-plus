@@ -122,11 +122,14 @@ typedef enum {
 	IGNORE_CASE = 1,
 } IGNORE_CASE_BOOL;
 
-#define STATUS_OK				(0)
-#define STATUS_ERROR				(-1)
-#define STATUS_RESIDENT_ATTRIBUTE_FILLED_MFT	(-2)
-#define STATUS_KEEP_SEARCHING			(-3)
-#define STATUS_NOT_FOUND			(-4)
+typedef enum {
+	STATUS_FIXED	= 1,
+	STATUS_OK	= 0,
+	STATUS_ERROR	= -1,
+	STATUS_RESIDENT_ATTRIBUTE_FILLED_MFT = -2,
+	STATUS_KEEP_SEARCHING	= -3,
+	STATUS_NOT_FOUND	= -4,
+} STATUS_T;
 
 /*
  *	Force alignment in a struct if required by processor
@@ -137,4 +140,3 @@ union ALIGNMENT {
 } ;
 
 #endif /* defined _NTFS_TYPES_H */
-
