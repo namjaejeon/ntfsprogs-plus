@@ -2676,6 +2676,63 @@ out:
 		ntfs_free(ia_buf);
 }
 
+static int _ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *actx;
+	ntfs_index_context *ictx;
+	FILE_NAME_ATTR *fn;
+
+	actx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!actx) {
+		ntfs_log_perror("Failed to get search ctx of inode(%llu) "
+				"in removing index.\n",
+				(unsigned long long)ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
+			0, NULL, 0, actx)) {
+		ntfs_log_perror("Failed to lookup $FN of inode(%llu) "
+				"in removing index.\n",
+				(unsigned long long)ni->mft_no);
+		ntfs_attr_put_search_ctx(actx);
+		return STATUS_ERROR;
+	}
+
+	fn = (FILE_NAME_ATTR *)((u8 *)actx->attr +
+			le16_to_cpu(actx->attr->value_offset));
+
+	ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
+	if (!ictx) {
+		ntfs_log_perror("Failed to get index ctx of inode(%llu) "
+				"in removing index.\n",
+				(unsigned long long)parent_ni->mft_no);
+		ntfs_attr_put_search_ctx(actx);
+		return STATUS_ERROR;
+	}
+
+	if (ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR), ictx)) {
+		ntfs_log_error("Failed to find index entry of inode(%llu).\n",
+				(unsigned long long)parent_ni->mft_no);
+		ntfs_attr_put_search_ctx(actx);
+		ntfs_index_ctx_put(ictx);
+		return STATUS_ERROR;
+	}
+
+	if (ntfs_index_rm(ictx)) {
+		ntfs_log_error("Failed to remove index entry of inode(%llu)\n",
+				(unsigned long long)parent_ni->mft_no);
+		ntfs_attr_put_search_ctx(actx);
+		ntfs_index_ctx_put(ictx);
+		return STATUS_ERROR;
+	}
+	ntfs_inode_mark_dirty(ictx->ni);
+
+	ntfs_attr_put_search_ctx(actx);
+	ntfs_index_ctx_put(ictx);
+	return STATUS_OK;
+}
+
 static void ntfsck_check_lost_found(ntfs_volume *vol, ntfs_inode *ni)
 {
 	ntfs_inode *lf_ni;	/* lost+found inode */
@@ -2686,16 +2743,31 @@ static void ntfsck_check_lost_found(ntfs_volume *vol, ntfs_inode *ni)
 	/* find 'lost+found' directory in root directory */
 	lf_mftno = ntfs_inode_lookup_by_mbsname(ni, FILENAME_LOST_FOUND);
 	if (lf_mftno == (u64)-1) {
-		ntfs_log_info("%s created\n", FILENAME_LOST_FOUND);
 		/* create 'lost+found' directory */
+create_lf:
 		ucs_namelen = ntfs_mbstoucs(FILENAME_LOST_FOUND, &ucs_name);
 		if (ucs_namelen != -1) {
 			lf_ni = ntfs_create(ni, 0, ucs_name, ucs_namelen, S_IFDIR);
+			ntfs_log_info("%s(%llu) created\n", FILENAME_LOST_FOUND,
+					(unsigned long long)lf_ni->mft_no);
 		}
 		free(ucs_name);
 	} else {
-		ntfs_log_info("%s was already created\n", FILENAME_LOST_FOUND);
 		lf_ni = ntfs_inode_open(vol, lf_mftno);
+		ntfs_log_info("%s(%llu) was already created\n", FILENAME_LOST_FOUND,
+				(unsigned long long)lf_ni->mft_no);
+
+		if (!(lf_ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
+			ntfs_log_error("%s(%llu) is not a directory, delete it\n",
+					FILENAME_LOST_FOUND,
+					(unsigned long long)lf_ni->mft_no);
+			_ntfsck_remove_index(ni, lf_ni);
+			ntfsck_check_non_resident_cluster(lf_ni, 0);
+			ntfsck_free_mft_records(vol, lf_ni);
+			lf_ni = NULL;
+
+			goto create_lf;
+		}
 	}
 
 	if (!lf_ni) {
