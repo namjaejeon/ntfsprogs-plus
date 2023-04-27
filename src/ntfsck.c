@@ -629,10 +629,9 @@ static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 
 /* only called from repairing orphaned file in auto fsck mode */
 static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
-		FILE_NAME_ATTR *fn)
+		FILE_NAME_ATTR *fn, BOOL check_flag)
 {
 	ntfs_index_context *ictx;
-	u64 mft_no = 0;
 
 	if (!parent_ni || !ni || !fn)
 		return STATUS_ERROR;
@@ -646,9 +645,24 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 	}
 
 	if (!ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR), ictx)) {
+		u64 mft_no = 0;
+
+		/* If check_flag set FALSE, when found $FN in parent index, return error */
+		if (check_flag == FALSE) {
+			ntfs_log_error("Index already exist in parent, delete inode(%llu)\n",
+					(unsigned long long)ni->mft_no);
+			ntfs_index_ctx_put(ictx);
+			return STATUS_ERROR;
+		}
+
+		/* If check_flags set TRUE, check founded inode */
 		mft_no = le64_to_cpu(ictx->entry->indexed_file);
 		if (ni->mft_no != MREF(mft_no)) {
 			/* found index and orphaned inode is different */
+			ntfs_log_error("mft number of inode(%llu) and parent index(%llu) "
+					"are different\n",
+					(unsigned long long)mft_no,
+					(unsigned long long)ni->mft_no);
 			ntfs_index_ctx_put(ictx);
 			return STATUS_ERROR;
 		}
@@ -670,7 +684,6 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 			ntfs_index_ctx_put(ictx);
 			return STATUS_ERROR;
 		}
-
 	} else {
 		ntfs_index_ctx_put(ictx);
 		return STATUS_NOT_FOUND;
@@ -686,7 +699,16 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	int err = STATUS_OK;
 	int ret = STATUS_ERROR;
 
-	/* Add index for orphaned inode */
+	ret = ntfsck_find_and_check_index(parent_ni, ni, fn, FALSE);
+	if (ret == STATUS_OK) { /* index already exist in parent inode */
+		return STATUS_OK;
+	} else if (ret == STATUS_ERROR) {
+		err = -EIO;
+		return STATUS_ERROR;
+	}
+
+	/* Not found index for $FN */
+
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 		ntfsck_initialize_index_attr(ni);
 
@@ -713,19 +735,12 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 		fn->data_size = 0;
 		ni->allocated_size = 0;
 		ni->data_size = 0;
-		ntfs_inode_mark_dirty(ni);
 	}
 
-	/* TODO: name is same, but inodes are different */
-	ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
-	if (ret == STATUS_OK) { /* index already exist in parent inode */
-		return STATUS_OK;
-	} else if (ret == STATUS_ERROR) {
-		err = -EIO;
-		return STATUS_ERROR;
-	}
+	fn->parent_directory = MK_LE_MREF(parent_ni->mft_no,
+			le16_to_cpu(parent_ni->mrec->sequence_number));
 
-	/* Not found index for $FN */
+	/* Add index for orphaned inode */
 
 	err = ntfs_index_add_filename(parent_ni, fn, MK_MREF(ni->mft_no,
 				le16_to_cpu(ni->mrec->sequence_number)));
@@ -740,12 +755,15 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	}
 
 	/* check again after adding $FN to index */
-	ret = ntfsck_find_and_check_index(parent_ni, ni, fn);
+	ret = ntfsck_find_and_check_index(parent_ni, ni, fn, TRUE);
 	if (ret != STATUS_OK) {
 		err = -EIO;
 		/* TODO: I don't know what should be done ??? */
 		return STATUS_ERROR;
 	}
+
+	NInoFileNameSetDirty(ctx->ntfs_ino);
+	ntfs_inode_mark_dirty(ctx->ntfs_ino);
 
 	ntfsck_mft_bmp_bit_set(ni->mft_no);
 	ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
@@ -778,10 +796,6 @@ static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 		ntfs_log_error("Can't open lost+found directory\n");
 		return ret;
 	}
-
-	fn->parent_directory = MK_LE_MREF(lost_found->mft_no,
-			le16_to_cpu(lost_found->mrec->sequence_number));
-	ntfs_inode_mark_dirty(ni);
 
 	ret = ntfsck_add_inode_to_parent(vol, lost_found, ni, fn, ctx);
 	ntfs_inode_close(lost_found);
@@ -895,17 +909,19 @@ add_to_lostfound:
 			}
 
 			ret = ntfsck_add_inode_to_parent(vol, parent_ni, ni, fn, ctx);
-			if (ret) {
-				ntfs_log_error("Failed to add inode(%llu) to parent(%llu)\n",
-						(unsigned long long)ni->mft_no,
-						(unsigned long long)parent_ni->mft_no);
-				goto add_to_lostfound;
-			}
+			if (!ret)
+				goto next_inode; /* success to add inode to parent */
+
+			ntfs_log_error("Failed to add inode(%llu) to parent(%llu)\n",
+					(unsigned long long)ni->mft_no,
+					(unsigned long long)parent_ni->mft_no);
 		} else {
 			ntfs_log_error("Failed to open parent inode(%lld)\n",
 					(unsigned long long)parent_no);
-			goto add_to_lostfound;
 		}
+
+		/* failed to add inode to parent */
+		goto add_to_lostfound;
 
 next_inode:
 		if (ctx) {
