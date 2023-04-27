@@ -1177,8 +1177,10 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	fn = ntfsck_find_file_name_attr(ni, ie_fn, actx);
 	if (!fn) {
 		/* NOT FOUND MFT/$FN */
-		ntfs_log_error("Filename(%s) in INDEX ENTRY is not found in inode(%llu)\n",
-				filename, (unsigned long long)ni->mft_no);
+		ntfs_log_error("Filename(%s) in index entry of parent(%llu) "
+				"was not found in inode(%llu)\n",
+				filename, (unsigned long long)ictx->ni->mft_no,
+				(unsigned long long)ni->mft_no);
 		ret = STATUS_ERROR;
 		goto out;
 	}
@@ -2089,6 +2091,8 @@ static int ntfsck_check_file(ntfs_inode *ni)
 		}
 	}
 
+	/* TODO: is it need to check length? */
+
 	/*
 	 * if rl is allocated in ntfsck_decompose_runlist(),
 	 * will be freed in ntfs_attr_close()
@@ -2276,11 +2280,11 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	int ret;
 
 	if (ni->attr_list) {
-		ret = ntfsck_check_attr_list(ni);
-		if (ret)
+		if (ntfsck_check_attr_list(ni))
 			goto err_out;
 
-		ntfs_inode_attach_all_extents(ni);
+		if (ntfs_inode_attach_all_extents(ni))
+			goto err_out;
 	}
 
 	ret = ntfsck_check_inode_non_resident(ni);
@@ -2358,13 +2362,19 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		if (!(ni->flags & FILE_ATTR_SYSTEM)) {
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret) {
-				ntfs_log_info("Failed to check inode(%llu) with index tree.\n",
-						(unsigned long long)ni->mft_no);
+				ntfs_log_info("Failed to check inode(%llu) "
+						"in parent(%llu) index.\n",
+						(unsigned long long)ni->mft_no,
+						(unsigned long long)ictx->ni->mft_no);
 
 				ntfs_inode_close(ni);
 				goto remove_index;
 			}
 		} else {
+			/*
+			 * Do not check return value because system files can be deleted.
+			 * this check may be already done in check system files.
+			 */
 			if (ni->attr_list) {
 				ret = ntfsck_check_attr_list(ni);
 
@@ -2713,7 +2723,8 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 		if (ntfsck_check_attr_list(ni))
 			goto err_out;
 
-		ntfs_inode_attach_all_extents(ni);
+		if (ntfs_inode_attach_all_extents(ni))
+			goto err_out;
 	}
 	ntfsck_check_inode_non_resident(ni);
 
