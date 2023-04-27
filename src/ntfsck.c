@@ -279,8 +279,8 @@ static int ntfsck_check_backup_boot_sector(ntfs_volume *vol, s64 cl_pos)
 		return -ENOENT;
 	}
 
-	ntfs_log_verbose("Found backup boot sector in "
-			 "the middle of the volume(cl_pos : %ld).\n", cl_pos);
+	ntfs_log_verbose("Found backup boot sector in the middle of the volume(cl_pos:%"PRId64").\n",
+			 cl_pos);
 	free(backup_boot);
 	return 0;
 }
@@ -306,8 +306,8 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 		if (count == 0) {
 			/* the backup bootsector need not be accounted for */
 			if (((vol->nr_clusters + 7) >> 3) > pos)
-				ntfs_log_error("$Bitmap size is smaller than expected (%lld < %lld)\n",
-						(long long)pos, (long long)vol->lcnbmp_na->data_size);
+				ntfs_log_error("$Bitmap size is smaller than expected (%"PRId64" < %"PRId64")\n",
+						pos, vol->lcnbmp_na->data_size);
 			break;
 		}
 
@@ -339,11 +339,13 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 					if (fsck_bmp_bit == 0 && lbmp_bit == 1) {
 						fsck_err_found();
 						clear_lcn_cnt++;
-						ntfs_log_trace("Found orphaned cluster bit(%ld) in $Bitmap. Clear it", cl);
+						ntfs_log_trace("Found orphaned cluster bit(%"PRId64") "
+								" in $Bitmap. Clear it", cl);
 					} else {
 						fsck_err_found();
 						set_lcn_cnt++;
-						ntfs_log_trace("Found missing cluster bit(%ld) in $Bitmap. Set it", cl);
+						ntfs_log_trace("Found missing cluster bit(%"PRId64") "
+							"in $Bitmap. Set it", cl);
 					}
 					if (_ntfsck_ask_repair(vol, FALSE)) {
 						ntfs_bit_set(bm, i * 8 + cl % 8, !lbmp_bit);
@@ -357,15 +359,16 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 		if (repair == TRUE) {
 			written = ntfs_attr_pwrite(vol->lcnbmp_na, wpos, count, bm);
 			if (written != count)
-				ntfs_log_error("lcn bitmap write failed, pos : %ld, count : %ld, written : %ld\n",
+				ntfs_log_error("lcn bitmap write failed, pos:%"PRId64 ", "
+						"count:%"PRId64", written:%"PRId64"\n",
 					wpos, count, written);
 			repair = FALSE;
 		}
 	}
 
-	ntfs_log_info("Total lcn bitmap clear:%lld, Total missing lcn bitmap:%lld\n",
-			(unsigned long long)clear_lcn_cnt,
-			(unsigned long long)set_lcn_cnt);
+	ntfs_log_info("Total lcn bitmap clear:%"PRId64", "
+			"Total missing lcn bitmap:%"PRId64"\n",
+			clear_lcn_cnt, set_lcn_cnt);
 
 	fsck_end_step();
 }
@@ -415,7 +418,7 @@ static int ntfsck_set_lcnbmp_range(s64 lcn, s64 length, u8 bit)
 
 		for (; bm_i <= bm_end; bm_i++) {
 			if (length < 0) {
-				ntfs_log_error("length should not be negative here! : %ld\n",
+				ntfs_log_error("length should not be negative here! : %"PRId64"\n",
 						length);
 				exit(1);
 			}
@@ -429,7 +432,7 @@ static int ntfsck_set_lcnbmp_range(s64 lcn, s64 length, u8 bit)
 
 			if (bm_i == bm_end) {
 				if (length > NTFSCK_BM_BITS_SIZE) {
-					ntfs_log_error("the last rest of length could not be bigger than bm size : %ld\n",
+					ntfs_log_error("the last rest of length could not be bigger than bm size:%"PRId64"\n",
 							length);
 					exit(1);
 				}
@@ -468,7 +471,8 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 
 		rl = ntfs_mapping_pairs_decompress(ni->vol, actx->attr, NULL);
 		if (!rl) {
-			ntfs_log_error("Failed to decompress runlist(mft_no : %ld, type : 0x%x).  Leaving inconsistent metadata.\n",
+			ntfs_log_error("Failed to decompress runlist(mft_no:%"PRIu64", type:0x%x). "
+					"Leaving inconsistent metadata.\n",
 					ni->mft_no, actx->attr->type);
 			continue;
 		}
@@ -476,7 +480,8 @@ static int ntfsck_update_lcn_bitmap(ntfs_inode *ni)
 		while (rl[i].length) {
 			if (rl[i].lcn > (LCN)LCN_HOLE) {
 				ntfsck_set_lcnbmp_range(rl[i].lcn, rl[i].length, 1);
-				ntfs_log_verbose("Cluster run of mft entry(%ld) : lcn : %ld, length : %ld\n",
+				ntfs_log_verbose("Cluster run of mft entry(%"PRIu64") "
+						": lcn:%"PRId64", length:%"PRId64"\n",
 						ni->mft_no, rl[i].lcn, rl[i].length);
 			}
 			++i;
@@ -519,8 +524,8 @@ static int ntfsck_setbit_runlist(ntfs_inode *ni, runlist *rl, u8 set_bit,
 
 	while (rl && rl[i].length) {
 		if (rl[i].lcn > LCN_HOLE) {
-			ntfs_log_trace("Cluster run of mtf entry(%ld): "
-					"vcn(%ld), lcn(%ld), length(%ld)\n",
+			ntfs_log_trace("Cluster run of mtf entry(%"PRIu64"): "
+					"vcn(%"PRId64"), lcn(%"PRId64"), length(%"PRId64")\n",
 					ni->mft_no, rl[i].vcn, rl[i].lcn,
 					rl[i].length);
 			if (lcnbmp_set)
@@ -610,19 +615,18 @@ static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 		free_inode = *(ni->extent_nis);
 		free_mftno = free_inode->mft_no;
 		if (ntfs_mft_record_free(vol, free_inode))
-			ntfs_log_error("Failed to free extent MFT record(%llu:%llu). "
+			ntfs_log_error("Failed to free extent MFT record(%"PRIu64":%"PRIu64"). "
 					"Leaving inconsistent metadata.\n",
-					(unsigned long long)free_mftno,
-					(unsigned long long)ni->mft_no);
+					free_mftno, ni->mft_no);
 		else
 			ntfsck_mft_bmp_bit_clear(free_mftno);
 	}
 
 	free_mftno = ni->mft_no;
 	if (ntfs_mft_record_free(vol, ni))
-		ntfs_log_error("Failed to free MFT record(%llu). "
+		ntfs_log_error("Failed to free MFT record(%"PRIu64"). "
 				"Leaving inconsistent metadata. Run chkdsk.\n",
-				(unsigned long long)ni->mft_no);
+				ni->mft_no);
 	else
 		ntfsck_mft_bmp_bit_clear(free_mftno);
 }
@@ -638,9 +642,8 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 
 	ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
 	if (!ictx) {
-		ntfs_log_perror("Failed to get index ctx, inode(%llu) "
-				"for repairing orphan inode",
-				(unsigned long long)parent_ni->mft_no);
+		ntfs_log_perror("Failed to get index ctx, inode(%"PRIu64") "
+				"for repairing orphan inode", parent_ni->mft_no);
 		return STATUS_ERROR;
 	}
 
@@ -649,8 +652,8 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 
 		/* If check_flag set FALSE, when found $FN in parent index, return error */
 		if (check_flag == FALSE) {
-			ntfs_log_error("Index already exist in parent, delete inode(%llu)\n",
-					(unsigned long long)ni->mft_no);
+			ntfs_log_error("Index already exist in parent, delete inode(%"PRIu64")\n",
+					ni->mft_no);
 			ntfs_index_ctx_put(ictx);
 			return STATUS_ERROR;
 		}
@@ -659,23 +662,20 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 		mft_no = le64_to_cpu(ictx->entry->indexed_file);
 		if (ni->mft_no != MREF(mft_no)) {
 			/* found index and orphaned inode is different */
-			ntfs_log_error("mft number of inode(%llu) and parent index(%llu) "
-					"are different\n",
-					(unsigned long long)mft_no,
-					(unsigned long long)ni->mft_no);
+			ntfs_log_error("mft number of inode(%"PRIu64") and parent index(%"PRIu64") "
+					"are different\n", mft_no, ni->mft_no);
 			ntfs_index_ctx_put(ictx);
 			return STATUS_ERROR;
 		}
 
 		if (ntfsck_check_inode(ni, ictx->entry, ictx)) {
 			/* Inode check failed, remove index and inode */
-			ntfs_log_error("Failed to check inode(%lld) "
-					"for repairing orphan inode\n",
-					(unsigned long long)ni->mft_no);
+			ntfs_log_error("Failed to check inode(%"PRId64") "
+					"for repairing orphan inode\n", ni->mft_no);
 
 			if (ntfs_index_rm(ictx)) {
-				ntfs_log_error("Failed to remove index entry of inode(%llu)\n",
-						(unsigned long long)ni->mft_no);
+				ntfs_log_error("Failed to remove index entry of inode(%"PRId64")\n",
+						ni->mft_no);
 				ntfs_index_ctx_put(ictx);
 				return STATUS_ERROR;
 			}
@@ -721,8 +721,8 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 				CASE_SENSITIVE, 0, NULL, 0, ctx);
 		if (err) {
 			/* $FILE_NAME lookup failed */
-			ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%llu)\n",
-					(unsigned long long)ni->mft_no);
+			ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%"PRIu64")\n",
+					ni->mft_no);
 			err = 0;
 			/* delete inode */
 			return STATUS_ERROR;
@@ -745,10 +745,8 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 	err = ntfs_index_add_filename(parent_ni, fn, MK_MREF(ni->mft_no,
 				le16_to_cpu(ni->mrec->sequence_number)));
 	if (err) {
-		ntfs_log_error("Failed to add index(%llu) to parent(%llu) "
-				"err(%d)\n",
-				(unsigned long long)ni->mft_no,
-				(unsigned long long)parent_ni->mft_no, err);
+		ntfs_log_error("Failed to add index(%"PRIu64") to parent(%"PRIu64") "
+				"err(%d)\n", ni->mft_no, parent_ni->mft_no, err);
 		err = -EIO;
 		/* if parent_ni != lost+found, then add inode to lostfound */
 		return STATUS_ERROR;
@@ -842,8 +840,8 @@ stack_of:
 						CASE_SENSITIVE, 0, NULL, 0, ctx);
 		if (ret) {
 			/* $FILE_NAME lookup failed */
-			ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%llu)\n",
-					(unsigned long long)ni->mft_no);
+			ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%"PRIu64")\n",
+					ni->mft_no);
 			goto delete_inode;
 		}
 
@@ -874,16 +872,14 @@ stack_of:
 			/*
 			 * Parent inode is deleted!
 			 */
-			ntfs_log_verbose("!! FOUND Deleted parent inode(%llu), inode(%llu)\n",
-					(unsigned long long)MREF(parent_no),
-					(unsigned long long)ni->mft_no);
+			ntfs_log_verbose("!! FOUND Deleted parent inode(%"PRIu64"), "
+					"inode(%"PRIu64")\n", MREF(parent_no), ni->mft_no);
 
 add_to_lostfound:
 			ret = ntfsck_add_inode_to_lostfound(ni, fn, ctx);
 			if (ret) {
-				ntfs_log_error("Failed to add inode(%llu) to %s\n",
-						(unsigned long long)ni->mft_no,
-						FILENAME_LOST_FOUND);
+				ntfs_log_error("Failed to add inode(%"PRIu64") to %s\n",
+						ni->mft_no, FILENAME_LOST_FOUND);
 				goto delete_inode;
 			}
 
@@ -900,10 +896,9 @@ add_to_lostfound:
 		if (parent_ni) {
 			/* Check parent inode */
 			if (ntfsck_check_directory(parent_ni)) {
-				ntfs_log_error("Failed to check parent directory(%lld:%lld) "
+				ntfs_log_error("Failed to check parent directory(%"PRIu64":%"PRIu64") "
 						"for repairing orphan inode\n",
-						(unsigned long long)parent_ni->mft_no,
-						(unsigned long long)ni->mft_no);
+						parent_ni->mft_no, ni->mft_no);
 				/* parent is not normal, add to lost+found */
 				goto add_to_lostfound;
 			}
@@ -912,12 +907,11 @@ add_to_lostfound:
 			if (!ret)
 				goto next_inode; /* success to add inode to parent */
 
-			ntfs_log_error("Failed to add inode(%llu) to parent(%llu)\n",
-					(unsigned long long)ni->mft_no,
-					(unsigned long long)parent_ni->mft_no);
+			ntfs_log_error("Failed to add inode(%"PRIu64") to parent(%"PRIu64")\n",
+					ni->mft_no, parent_ni->mft_no);
 		} else {
-			ntfs_log_error("Failed to open parent inode(%lld)\n",
-					(unsigned long long)parent_no);
+			ntfs_log_error("Failed to open parent inode(%"PRIu64")\n",
+					parent_no);
 		}
 
 		/* failed to add inode to parent */
@@ -959,7 +953,7 @@ delete_inode:
 	goto next_inode;
 }
 
-int clear_mft_cnt;
+s64 clear_mft_cnt;
 static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
 	int is_used;
@@ -969,22 +963,21 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	is_used = utils_mftrec_in_use(vol, mft_num);
 	if (is_used < 0) {
-		check_failed("Error getting bit value for record %lld.\n",
-			(long long)mft_num);
+		check_failed("Error getting bit value for record %"PRId64".\n",
+			mft_num);
 		return;
 	} else if (!is_used) {
 		if (mft_num <= always_exist_sys_meta_num) {
-			check_failed("Record %lld unused. Fixing or fail about system files.\n",
-					(long long)mft_num);
+			check_failed("Record(%"PRId64") unused. Fixing or fail about system files.\n",
+					mft_num);
 			return;
 		}
 
-		ntfs_log_verbose("Record %lld unused. Skipping.\n",
-				(long long)mft_num);
+		ntfs_log_verbose("Record(%"PRId64") unused. Skipping.\n", mft_num);
 		return;
 	}
 
-	ntfs_log_verbose("MFT record %lld\n", (long long)mft_num);
+	ntfs_log_verbose("MFT record %"PRId64"\n", mft_num);
 
 	ni = ntfs_inode_open(vol, mft_num);
 	is_used = ntfsck_mft_bmp_bit_get(mft_num);
@@ -999,9 +992,9 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	if (!ni) {
 		fsck_err_found();
-		ntfs_log_trace("Clear the bit of mft no(%lld) "
+		ntfs_log_trace("Clear the bit of mft no(%"PRId64") "
 				"in the $MFT/$BITMAP corresponding orphaned MFT record",
-				(unsigned long long)mft_num);
+				mft_num);
 		if (_ntfsck_ask_repair(vol, FALSE)) {
 			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
 				ntfs_log_error("ntfs_bitmap_clear_bit failed, errno : %d\n",
@@ -1016,8 +1009,8 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 
 	mft_no = ni->mft_no;
 	if (!is_used) {
-		check_failed("Found an orphaned file(mft no: %ld). Try to add index entry",
-				mft_num);
+		check_failed("Found an orphaned file(mft no: %"PRId64"). "
+				"Try to add index entry", mft_num);
 		if (ntfsck_ask_repair(vol)) {
 			/* close inode to avoid nested call of ntfs_inode_open() */
 			ntfs_inode_close(ni);
@@ -1121,26 +1114,22 @@ void ntfsck_debug_print_fn_attr(ntfs_attr_search_ctx *actx,
 	if (diff == FALSE)
 		return;
 
-	ntfs_log_info("======== START %llu ================\n",
-			(unsigned long long)ni->mft_no);
-	ntfs_log_info("inode ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
-			(unsigned long long)ni->creation_time,
-			(unsigned long long)ni->last_data_change_time,
-			(unsigned long long)ni->last_mft_change_time,
-			(unsigned long long)ni->last_access_time);
-	ntfs_log_info("std_info ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
-			(unsigned long long)si_ctime, (unsigned long long)si_mtime,
-			(unsigned long long)si_mtime_mft, (unsigned long long)si_atime);
-	ntfs_log_info("mft_fn ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
-			(unsigned long long)mft_fn->creation_time,
-			(unsigned long long)mft_fn->last_data_change_time,
-			(unsigned long long)mft_fn->last_mft_change_time,
-			(unsigned long long)mft_fn->last_access_time);
-	ntfs_log_info("idx_fn ctime:%llx, mtime:%llx, mftime:%llx, atime:%llx\n",
-			(unsigned long long)idx_fn->creation_time,
-			(unsigned long long)idx_fn->last_data_change_time,
-			(unsigned long long)idx_fn->last_mft_change_time,
-			(unsigned long long)idx_fn->last_access_time);
+	ntfs_log_info("======== START %"PRIu64"================\n", ni->mft_no);
+	ntfs_log_info("inode ctime:%"PRIx64", mtime:%"PRIx64", "
+			"mftime:%"PRIx64", atime:%"PRIx64"\n",
+			ni->creation_time, ni->last_data_change_time,
+			ni->last_mft_change_time, ni->last_access_time);
+	ntfs_log_info("std_info ctime:%"PRIx64", mtime:%"PRIx64", "
+			"mftime:%"PRIx64", atime:%"PRIx64"\n",
+			si_ctime, si_mtime, si_mtime_mft, si_atime);
+	ntfs_log_info("mft_fn ctime:%"PRIx64", mtime:%"PRIx64", "
+			"mftime:%"PRIx64", atime:%"PRIx64"\n",
+			mft_fn->creation_time, mft_fn->last_data_change_time,
+			mft_fn->last_mft_change_time, mft_fn->last_access_time);
+	ntfs_log_info("idx_fn ctime:%"PRIx64", mtime:%"PRIx64", "
+			"mftime:%"PRIx64", atime:%"PRIx64"\n",
+			idx_fn->creation_time, idx_fn->last_data_change_time,
+			idx_fn->last_mft_change_time, idx_fn->last_access_time);
 	ntfs_log_info("======== END =======================\n");
 
 	return;
@@ -1177,10 +1166,9 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	fn = ntfsck_find_file_name_attr(ni, ie_fn, actx);
 	if (!fn) {
 		/* NOT FOUND MFT/$FN */
-		ntfs_log_error("Filename(%s) in index entry of parent(%llu) "
-				"was not found in inode(%llu)\n",
-				filename, (unsigned long long)ictx->ni->mft_no,
-				(unsigned long long)ni->mft_no);
+		ntfs_log_error("Filename(%s) in index entry of parent(%"PRIu64") "
+				"was not found in inode(%"PRIu64")\n",
+				filename, ictx->ni->mft_no, ni->mft_no);
 		ret = STATUS_ERROR;
 		goto out;
 	}
@@ -1199,12 +1187,10 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		idx_pdir_seq != mft_pdir_seq ||
 		mft_pdir != ictx->ni->mft_no) {
 			ntfs_log_error("Parent MFT reference is differnt "
-					"(IDX/$FN:%llu-%u MFT/$FN:%llu-%u) "
-					"on inode(%llu, %s), parent(%llu)\n",
-					(unsigned long long)idx_pdir, idx_pdir_seq,
-					(unsigned long long)mft_pdir, mft_pdir_seq,
-					(unsigned long long)ni->mft_no, filename,
-					(unsigned long long)ictx->ni->mft_no);
+					"(IDX/$FN:%"PRIu64"-%u MFT/$FN:%"PRIu64"-%u) "
+					"on inode(%"PRIu64", %s), parent(%"PRIu64")\n",
+					idx_pdir, idx_pdir_seq, mft_pdir, mft_pdir_seq,
+					ni->mft_no, filename, ictx->ni->mft_no);
 			ret = STATUS_ERROR;
 			goto out;
 	}
@@ -1224,8 +1210,8 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 		if (ntfs_attr_lookup(AT_REPARSE_POINT, AT_UNNAMED, 0,
 					CASE_SENSITIVE, 0, NULL, 0, _ctx)) {
 			ntfs_log_error("MFT flag set as reparse file, but there's no "
-					"MFT/$REPARSE_POINT attribute on inode(%llu:%s)",
-					(unsigned long long)ni->mft_no, filename);
+					"MFT/$REPARSE_POINT attribute on inode(%"PRIu64":%s)",
+					ni->mft_no, filename);
 			ntfs_attr_put_search_ctx(_ctx);
 			ret = STATUS_ERROR;
 			goto out;
@@ -1240,10 +1226,10 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 		if (ie_fn->reparse_point_tag != rpp->reparse_tag) {
 			check_failed("Reparse tag is different "
-				"(IDX/$FN:%08lx MFT/$FN:%08lx) on inode(%llu, %s)",
+				"(IDX/$FN:%08lx MFT/$FN:%08lx) on inode(%"PRIu64", %s)",
 				(long)le32_to_cpu(ie_fn->reparse_point_tag),
 				(long)le32_to_cpu(fn->reparse_point_tag),
-				(unsigned long long)ni->mft_no, filename);
+				ni->mft_no, filename);
 			ie_fn->reparse_point_tag = rpp->reparse_tag;
 			need_fix = TRUE;
 			ntfs_attr_put_search_ctx(_ctx);
@@ -1262,8 +1248,8 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
 		if (!(ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT)) {
 			check_failed("MFT flag set as directory, but MFT/$FN flag "
-					"of inode(%llu:%s) is not set! Fix it.",
-					(unsigned long long)ni->mft_no, filename);
+					"of inode(%"PRIu64":%s) is not set! Fix it.",
+					ni->mft_no, filename);
 			if (ntfsck_ask_repair(vol)) {
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
 				fn->file_attributes = ie_fn->file_attributes;
@@ -1276,13 +1262,12 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 
 		if (ie_fn->allocated_size != 0 || ie_fn->data_size != 0 ||
 				ni->allocated_size != 0 || ni->data_size != 0) {
-			check_failed("Directory(%llu:%s) has non-zero "
-					"length(ie:%llu,%llu, ni:%llu,%llu). Fix it.",
-					(unsigned long long)ni->mft_no, filename,
-					(unsigned long long)ie_fn->allocated_size,
-					(unsigned long long)ie_fn->data_size,
-					(unsigned long long)ni->allocated_size,
-					(unsigned long long)ni->data_size);
+			check_failed("Directory(%"PRIu64":%s) has non-zero "
+					"length(ie:%"PRIu64",%"PRIu64", "
+					"ni:%"PRIu64",%"PRIu64"). Fix it.",
+					ni->mft_no, filename, ie_fn->allocated_size,
+					ie_fn->data_size, ni->allocated_size,
+					ni->data_size);
 			if (ntfsck_ask_repair(vol)) {
 				ni->allocated_size = 0;
 				ni->data_size = 0;
@@ -1309,10 +1294,10 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	/* check $FN size fields */
 	if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
 		check_failed("Allocated size is different "
-				"(IDX/$FN:%llu MFT/$DATA:%llu) on inode(%llu, %s). Fix it.",
-				(unsigned long long)sle64_to_cpu(ie_fn->allocated_size),
-				(unsigned long long)ni->allocated_size,
-				(unsigned long long)ni->mft_no, filename);
+				"(IDX/$FN:%"PRIu64"MFT/$DATA:%"PRIu64") "
+				"on inode(%"PRIu64", %s). Fix it.",
+				sle64_to_cpu(ie_fn->allocated_size),
+				ni->allocated_size, ni->mft_no, filename);
 		need_fix = TRUE;
 		goto fix_index;
 	}
@@ -1322,10 +1307,10 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 */
 	if (ni->data_size != ie_fn->data_size) {
 		check_failed("Data size is different "
-				"(IDX/$FN:%llu MFT/$DATA:%llu) on inode(%llu, %s). Fix it.",
-				(unsigned long long)sle64_to_cpu(ie_fn->data_size),
-				(unsigned long long)ni->data_size,
-				(unsigned long long)ni->mft_no, filename);
+				"(IDX/$FN:%"PRIu64"MFT/$DATA:%"PRIu64") "
+				"on inode(%"PRIu64", %s). Fix it.",
+				sle64_to_cpu(ie_fn->data_size),
+				ni->data_size, ni->mft_no, filename);
 		need_fix = TRUE;
 		goto fix_index;
 	}
@@ -1434,9 +1419,9 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		/* mft record flags is set to directory */
 		if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
 			if (!(ie_flags & FILE_ATTR_I30_INDEX_PRESENT)) {
-				check_failed("MFT(%llu) flag is set to directory, "
+				check_failed("MFT(%"PRIu64") flag is set to directory, "
 						"but Index/$FILE_NAME is not set.",
-						(unsigned long long)ni->mft_no);
+						ni->mft_no);
 				ie_flags |= FILE_ATTR_I30_INDEX_PRESENT;
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
 				if (ntfsck_ask_repair(vol)) {
@@ -1453,9 +1438,8 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 				return STATUS_ERROR;
 
 			/* not found $INDEX_ROOT, check failed */
-			check_failed("MFT(%llu) flag is set to directory, "
-					"but there's no MFT/$IR attr.",
-					(unsigned long long)ni->mft_no);
+			check_failed("MFT(%"PRIu64") flag is set to directory, "
+					"but there's no MFT/$IR attr.", ni->mft_no);
 			ie_flags &= ~FILE_ATTR_I30_INDEX_PRESENT;
 			ni->mrec->flags &= ~MFT_RECORD_IS_DIRECTORY;
 			if (ntfsck_ask_repair(vol)) {
@@ -1464,10 +1448,9 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 			}
 
 			if (ie_flags & FILE_ATTR_I30_INDEX_PRESENT) {
-				check_failed("MFT(%llu) $IR does not exist, "
+				check_failed("MFT(%"PRIu64") $IR does not exist, "
 						"but Index/$FILE_NAME flag is set to "
-						"directory.",
-						(unsigned long long)ni->mft_no);
+						"directory.", ni->mft_no);
 				ie_flags &= ~FILE_ATTR_I30_INDEX_PRESENT;
 				ie_fn->file_attributes &= ~FILE_ATTR_I30_INDEX_PRESENT;
 				if (ntfsck_ask_repair(vol)) {
@@ -1484,9 +1467,9 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		/* mft record flags is not set to directory */
 		if (ntfs_attr_exist(ni, AT_DATA, AT_UNNAMED, 0)) {
 			if (ie_flags & FILE_ATTR_I30_INDEX_PRESENT) {
-				check_failed("MFT(%llu) flag is set to file, "
+				check_failed("MFT(%"PRIu64") flag is set to file, "
 						"but MFT/$IR is set to directory.",
-						(unsigned long long)ni->mft_no);
+						ni->mft_no);
 				ie_flags &= ~FILE_ATTR_I30_INDEX_PRESENT;
 				ie_fn->file_attributes &= ~FILE_ATTR_I30_INDEX_PRESENT;
 				if (ntfsck_ask_repair(vol)) {
@@ -1508,9 +1491,9 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 				return STATUS_ERROR;
 			}
 
-			check_failed("MFT(%llu) flag is set to file, "
+			check_failed("MFT(%"PRIu64") flag is set to file, "
 					"but there's no MFT/$DATA, but MFT/$IR.",
-					(unsigned long long)ni->mft_no);
+					ni->mft_no);
 			/* found $INDEX_ROOT */
 			ie_flags |= FILE_ATTR_I30_INDEX_PRESENT;
 			ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
@@ -1651,9 +1634,8 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 
 		if (!next_vcn) {
 			if (attr->lowest_vcn) {
-				check_failed("inode(%llu)'s first $DATA"
-						" lowest_vcn is not zero",
-						(unsigned long long)ni->mft_no);
+				check_failed("inode(%"PRIu64")'s first $DATA"
+						" lowest_vcn is not zero", ni->mft_no);
 				err = EIO;
 				/* should fix attribute's lowest_vcn */
 				if (ntfsck_ask_repair(vol)) {
@@ -1679,8 +1661,8 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 
 		/* Avoid endless loops due to corruption */
 		if (next_vcn < sle64_to_cpu(attr->lowest_vcn)) {
-			ntfs_log_error("Inode %llu has corrupt attribute list\n",
-					(unsigned long long)ni->mft_no);
+			ntfs_log_error("Inode %"PRIu64"has corrupt attribute list\n",
+					ni->mft_no);
 			/* TODO: how attribute list repair ?? */
 			err = EIO;
 			break;
@@ -1692,9 +1674,9 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 
 	if (highest_vcn != last_vcn - 1) {
 		ntfs_log_error("highest_vcn and last_vcn of attr(%x) "
-				"of inode(%llu) : highest_vcn(0x%llx) last_vcn(0x%llx)\n",
-				na->type, (unsigned long long)na->ni->mft_no,
-				(long long)highest_vcn, (long long)last_vcn);
+				"of inode(%"PRIu64") : highest_vcn(0x%"PRIx64") "
+				"last_vcn(0x%"PRIx64")\n",
+				na->type, na->ni->mft_no, highest_vcn, last_vcn);
 		*need_fix = TRUE;
 	}
 
@@ -1721,8 +1703,8 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 	ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION, NTFS_INDEX_I30, 4);
 	if (ia_na) {
 		if (ntfs_attr_rm(ia_na)) {
-			ntfs_log_error("Failed to remove $IA attr. of inode(%lld)\n",
-					(unsigned long long)ni->mft_no);
+			ntfs_log_error("Failed to remove $IA attr. of inode(%"PRId64")\n",
+					ni->mft_no);
 			goto out;
 		}
 		ntfs_attr_close(ia_na);
@@ -1733,8 +1715,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 	if (bm_na) {
 		if (ntfs_attr_rm(bm_na)) {
 			ntfs_log_error("Failed to remove $BITMAP attr. of "
-					" inode(%lld)\n",
-					(unsigned long long)ni->mft_no);
+					" inode(%"PRIu64")\n", ni->mft_no);
 			goto out;
 		}
 		ntfs_attr_close(bm_na);
@@ -1743,7 +1724,7 @@ static int ntfsck_initialize_index_attr(ntfs_inode *ni)
 
 	ir_na = ntfs_attr_open(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4);
 	if (!ir_na) {
-		ntfs_log_verbose("Can't open $IR attribute from mft(%ld) entry\n",
+		ntfs_log_verbose("Can't open $IR attribute from mft(%"PRIu64") entry\n",
 				ni->mft_no);
 		goto out;
 	}
@@ -1811,14 +1792,14 @@ static int ntfsck_decompose_setbit_runlist(ntfs_attr *na, struct rl_size *rls,
 
 	rl = ntfsck_decompose_runlist(na, need_fix);
 	if (!rl) {
-		ntfs_log_error("Failed to get cluster run in directory(%lld)",
-				(unsigned long long)na->ni->mft_no);
+		ntfs_log_error("Failed to get cluster run in directory(%"PRId64")",
+				na->ni->mft_no);
 		return STATUS_ERROR;
 	}
 
 #ifdef _DEBUG
-	ntfs_log_info("Before (%lld) =========================\n",
-			(unsigned long long)na->ni->mft_no);
+	ntfs_log_info("Before (%"PRId64") =========================\n",
+			na->ni->mft_no);
 	ntfs_dump_runlist(rl);
 #endif
 
@@ -1827,8 +1808,8 @@ static int ntfsck_decompose_setbit_runlist(ntfs_attr *na, struct rl_size *rls,
 		return STATUS_ERROR;
 
 #ifdef _DEBUG
-	ntfs_log_info("After (%lld) =========================\n",
-			(unsigned long long)na->ni->mft_no);
+	ntfs_log_info("After (%"PRId64") =========================\n",
+			na->ni->mft_no);
 	ntfs_dump_runlist(rl);
 #endif
 	return 0;
@@ -1840,8 +1821,7 @@ static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size)
 	na->allocated_size = new_size;
 	if (ntfs_attr_update_mapping_pairs(na, 0)) {
 		ntfs_log_error("Failed to update mapping pairs of "
-				"inode(%llu)\n",
-				(unsigned long long)na->ni->mft_no);
+				"inode(%"PRIu64")\n", na->ni->mft_no);
 		return STATUS_ERROR;
 	}
 
@@ -1878,18 +1858,15 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls
 	/* check cluster runlist and set bitmap */
 	if (ntfsck_decompose_setbit_runlist(na, &rls, &need_fix)) {
 		check_failed("Failed to get non-resident attribute(%d) "
-				"in directory(%lld)",
-				na->type, (unsigned long long)ni->mft_no);
+				"in directory(%"PRId64")", na->type, ni->mft_no);
 		return STATUS_ERROR;
 	}
 
 	/* if need_fix is set to TRUE, apply modified runlist to cluster runs */
 	if (need_fix == TRUE) {
-		check_failed("Non-resident cluster run of inode(%lld:%d) "
-				"corrupted. rl_size(%llx:%llx). Truncate it",
-				(unsigned long long)ni->mft_no, na->type,
-				(unsigned long long)rls.alloc_size,
-				(unsigned long long)rls.real_size);
+		check_failed("Non-resident cluster run of inode(%"PRId64":%d) "
+				"corrupted. rl_size(%"PRIx64":%"PRIx64"). Truncate it",
+				ni->mft_no, na->type, rls.alloc_size, rls.real_size);
 
 		if (ntfsck_ask_repair(vol)) {
 			/*
@@ -1923,8 +1900,7 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 	 * (ntfs_attr_inconsistent()). just check existence of $INDEX_ROOT.
 	 */
 	if (!ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
-		ntfs_log_perror("$IR is missing in inode(%lld)",
-				(unsigned long long)ni->mft_no);
+		ntfs_log_perror("$IR is missing in inode(%"PRId64")", ni->mft_no);
 		ret = STATUS_ERROR;
 		/* remove mft entry */
 		goto out;
@@ -1945,8 +1921,7 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 		/* only $BITMAP exist, remove it */
 		if (ntfs_attr_rm(bm_na)) {
 			ntfs_log_error("Failed to remove $BITMAP attr. of "
-					" inode(%lld)\n",
-					(unsigned long long)ni->mft_no);
+					" inode(%"PRId64")\n", ni->mft_no);
 			ret = STATUS_ERROR;
 			goto out;
 		}
@@ -1973,8 +1948,8 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 	if (!bm_na) {
 		u8 bmp[8];
 
-		ntfs_log_perror("Failed to open $BITMAP of inode %llu",
-				(unsigned long long)ni->mft_no);
+		ntfs_log_perror("Failed to open $BITMAP of inode(%"PRIu64")",
+				ni->mft_no);
 
 		memset(bmp, 0, sizeof(bmp));
 		if (ntfs_attr_add(ni, AT_BITMAP, NTFS_INDEX_I30, 4, bmp,
@@ -2024,8 +1999,7 @@ static int ntfsck_check_file(ntfs_inode *ni)
 
 	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
 	if (!na) {
-		ntfs_log_perror("Failed to open $DATA of inode "
-				"%llu", (unsigned long long)ni->mft_no);
+		ntfs_log_perror("Failed to open $DATA of inode(%"PRIu64")", ni->mft_no);
 		return STATUS_ERROR;
 	}
 
@@ -2044,9 +2018,9 @@ static int ntfsck_check_file(ntfs_inode *ni)
 	if (cs_flags & ATTR_IS_SPARSE) {
 		/* sparse file */
 		if (!(si_cs_flags & FILE_ATTR_SPARSE_FILE)) {
-			check_failed("Sparse flags of $STD_INFO and DATA in inode(%llu) "
+			check_failed("Sparse flags of $STD_INFO and DATA in inode(%"PRIu64") "
 					"are different. Set sparse to inode",
-					(unsigned long long)ni->mft_no);
+					ni->mft_no);
 
 			if (ntfsck_ask_repair(vol)) {
 				si_flags &= ~FILE_ATTR_COMPRESSED;
@@ -2060,9 +2034,9 @@ static int ntfsck_check_file(ntfs_inode *ni)
 		}
 	} else if (cs_flags & ATTR_IS_COMPRESSED) {
 		if (!(si_cs_flags & FILE_ATTR_COMPRESSED)) {
-			check_failed("Compressed flags of $STD_INFO and DATA in inode(%llu) "
+			check_failed("Compressed flags of $STD_INFO and DATA in inode(%"PRIu64") "
 					"are different. Set compressed to inode.",
-					(unsigned long long)ni->mft_no);
+					ni->mft_no);
 
 			if (ntfsck_ask_repair(vol)) {
 				si_flags &= ~FILE_ATTR_SPARSE_FILE;
@@ -2076,9 +2050,9 @@ static int ntfsck_check_file(ntfs_inode *ni)
 		}
 	} else if (!cs_flags) {
 		if (si_cs_flags) {
-			check_failed("Sparse/Compressed flags of $STD_INFO and DATA in inode(%llu) "
+			check_failed("Sparse/Compressed flags of $STD_INFO and DATA in inode(%"PRIu64") "
 					"are different. Clear flag of inode.",
-					(unsigned long long)ni->mft_no);
+					ni->mft_no);
 
 			if (ntfsck_ask_repair(vol)) {
 				si_flags &= ~(FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED);
@@ -2110,8 +2084,8 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni)
 		return STATUS_ERROR;
 
 	if (ntfsck_mft_bmp_bit_set(ni->mft_no)) {
-		ntfs_log_error("Failed to set MFT bitmap for (%llu)\n",
-				(unsigned long long)ni->mft_no);
+		ntfs_log_error("Failed to set MFT bitmap for (%"PRIu64")\n",
+				ni->mft_no);
 		/* do not return error */
 	}
 
@@ -2149,8 +2123,8 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni)
 				(ntfschar *)((u8 *)a + le16_to_cpu(a->name_offset)),
 				a->name_length);
 		if (!na) {
-			ntfs_log_perror("Can't open attribute(%d) of inode(%llu)\n",
-					a->type, (unsigned long long)ni->mft_no);
+			ntfs_log_perror("Can't open attribute(%d) of inode(%"PRIu64")\n",
+					a->type, ni->mft_no);
 			ntfs_attr_put_search_ctx(ctx);
 			return STATUS_ERROR;
 		}
@@ -2231,9 +2205,8 @@ static int _ntfsck_check_attr_list_type(ntfs_attr_search_ctx *ctx)
 
 out:
 	if (ni->attr_list_size != al_real_length) {
-		check_failed("Attr_list length(%x:%x) of inode(%llu) is corrupted",
-				ni->attr_list_size, al_real_length,
-				(unsigned long long)ni->mft_no);
+		check_failed("Attr_list length(%x:%x) of inode(%"PRIu64") is corrupted",
+				ni->attr_list_size, al_real_length, ni->mft_no);
 		if (ntfsck_ask_repair(ni->vol)) {
 			ntfs_set_attribute_value_length(ctx->attr, al_real_length);
 			ni->attr_list_size = al_real_length;
@@ -2354,7 +2327,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		return STATUS_OK;
 
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
-	ntfs_log_verbose("ntfsck_check_index %ld, %s\n", MREF(mref), filename);
+	ntfs_log_verbose("ntfsck_check_index %"PRIu64", %s\n",
+			MREF(mref), filename);
 
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
@@ -2362,10 +2336,9 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		if (!(ni->flags & FILE_ATTR_SYSTEM)) {
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret) {
-				ntfs_log_info("Failed to check inode(%llu) "
-						"in parent(%llu) index.\n",
-						(unsigned long long)ni->mft_no,
-						(unsigned long long)ictx->ni->mft_no);
+				ntfs_log_info("Failed to check inode(%"PRIu64") "
+						"in parent(%"PRIu64") index.\n",
+						ni->mft_no, ictx->ni->mft_no);
 
 				ntfs_inode_close(ni);
 				goto remove_index;
@@ -2404,19 +2377,19 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	} else {
 
 remove_index:
-		check_failed("Index entry(%llu:%s) "
-				"is corrupted, Removing index entry from parent(%llu)",
-				(unsigned long long)MREF(mref), filename,
-				(unsigned long long)MREF_LE(ie_fn->parent_directory));
+		check_failed("Index entry(%"PRIu64":%s) "
+				"is corrupted, Removing index entry from parent(%"PRIu64")",
+				MREF(mref), filename,
+				MREF_LE(ie_fn->parent_directory));
 		if (ntfsck_ask_repair(vol)) {
 			ictx->entry = ie;
 			ret = ntfs_index_rm(ictx);
 			if (ret) {
-				ntfs_log_error("Failed to remove index entry of inode(%llu:%s)\n",
-						(unsigned long long)MREF(mref), filename);
+				ntfs_log_error("Failed to remove index entry of inode(%"PRIu64":%s)\n",
+						MREF(mref), filename);
 			} else {
-				ntfs_log_verbose("Index entry of inode(%llu:%s) is deleted\n",
-						(unsigned long long)MREF(mref), filename);
+				ntfs_log_verbose("Index entry of inode(%"PRIu64":%s) is deleted\n",
+						MREF(mref), filename);
 				ret = STATUS_FIXED;
 				fsck_err_fixed();
 			}
@@ -2468,8 +2441,8 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 	/* read index bitmap from disk */
 	ni_ibm = ntfs_attr_readall(ni, AT_BITMAP, NTFS_INDEX_I30, 4, &ibm_size);
 	if (!ni_ibm) {
-		ntfs_log_error("Failed to read $BITMAP of inode(%llu)\n",
-				(unsigned long long)ni->mft_no);
+		ntfs_log_error("Failed to read $BITMAP of inode(%"PRIu64")\n",
+				ni->mft_no);
 		return STATUS_ERROR;
 	}
 
@@ -2492,16 +2465,14 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 			pos += sizeof(unsigned long long);
 		}
 #endif
-		check_failed("Inode(%llu) $IA bitmap different. Fix it",
-				(unsigned long long)ni->mft_no);
+		check_failed("Inode(%"PRIu64") $IA bitmap different. Fix it", ni->mft_no);
 		if (ntfsck_ask_repair(vol)) {
 			wcnt = ntfs_attr_pwrite(bm_na, 0, ibm_size, ni->fsck_ibm);
 			if (wcnt == ibm_size)
 				fsck_err_fixed();
 			else
-				ntfs_log_error("Can't write $BITMAP(%lld) of inode(%llu)\n",
-						(long long)wcnt,
-						(unsigned long long)ni->mft_no);
+				ntfs_log_error("Can't write $BITMAP(%"PRId64") "
+						"of inode(%"PRIu64")\n", wcnt, ni->mft_no);
 		}
 	}
 
@@ -2567,8 +2538,8 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		goto out;
 
 	if (ntfsck_initialize_index_attr(ni)) {
-		ntfs_log_error("Failed to initialize index attributes of ntfs inode(%ld), errno %d\n",
-				ni->mft_no, errno);
+		ntfs_log_perror("Failed to initialize index attributes of inode(%"PRIu64")\n",
+				ni->mft_no);
 		goto out;
 	}
 
@@ -2580,8 +2551,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		    (u8 *)ie + le16_to_cpu(ie->length) > index_end) {
 
 			ntfs_log_verbose("Index root entry out of bounds in"
-					" inode %lld\n",
-					(unsigned long long)ni->mft_no);
+					" inode %"PRId64"\n", ni->mft_no);
 			break;
 		}
 
@@ -2599,7 +2569,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 		ie_fn = &ie->key.file_name;
 		mref = le64_to_cpu(ie->indexed_file);
-		ntfs_log_info("Inserting entry to index root, mref : %ld, %s\n",
+		ntfs_log_info("Inserting entry to index root, mref : %"PRIu64", %s\n",
 			      le64_to_cpu(ie->indexed_file),
 			      ntfs_attr_name_get(ie_fn->file_name,
 			      ie_fn->file_name_length));
@@ -2632,7 +2602,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 				index_end) {
 
 				ntfs_log_verbose("Index entry out of bounds in directory inode "
-						 "%lld.\n", (unsigned long long)ni->mft_no);
+						 "%"PRId64".\n", ni->mft_no);
 				break;
 			}
 
@@ -2652,7 +2622,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 			ie_fn = &ie->key.file_name;
 			mref = le64_to_cpu(ie->indexed_file);
-			ntfs_log_info("Inserting entry to $IA, mref : %ld, %s\n",
+			ntfs_log_info("Inserting entry to $IA, mref : %"PRIu64", %s\n",
 				      le64_to_cpu(ie->indexed_file),
 				      ntfs_attr_name_get(ie_fn->file_name,
 				      ie_fn->file_name_length));
@@ -2684,17 +2654,15 @@ static int _ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_inode *ni)
 
 	actx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!actx) {
-		ntfs_log_perror("Failed to get search ctx of inode(%llu) "
-				"in removing index.\n",
-				(unsigned long long)ni->mft_no);
+		ntfs_log_perror("Failed to get search ctx of inode(%"PRIu64") "
+				"in removing index.\n", ni->mft_no);
 		return STATUS_ERROR;
 	}
 
 	if (ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
 			0, NULL, 0, actx)) {
-		ntfs_log_perror("Failed to lookup $FN of inode(%llu) "
-				"in removing index.\n",
-				(unsigned long long)ni->mft_no);
+		ntfs_log_perror("Failed to lookup $FN of inode(%"PRIu64") "
+				"in removing index.\n", ni->mft_no);
 		ntfs_attr_put_search_ctx(actx);
 		return STATUS_ERROR;
 	}
@@ -2704,24 +2672,23 @@ static int _ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_inode *ni)
 
 	ictx = ntfs_index_ctx_get(parent_ni, NTFS_INDEX_I30, 4);
 	if (!ictx) {
-		ntfs_log_perror("Failed to get index ctx of inode(%llu) "
-				"in removing index.\n",
-				(unsigned long long)parent_ni->mft_no);
+		ntfs_log_perror("Failed to get index ctx of inode(%"PRIu64") "
+				"in removing index.\n", parent_ni->mft_no);
 		ntfs_attr_put_search_ctx(actx);
 		return STATUS_ERROR;
 	}
 
 	if (ntfs_index_lookup(fn, sizeof(FILE_NAME_ATTR), ictx)) {
-		ntfs_log_error("Failed to find index entry of inode(%llu).\n",
-				(unsigned long long)parent_ni->mft_no);
+		ntfs_log_error("Failed to find index entry of inode(%"PRIu64").\n",
+				parent_ni->mft_no);
 		ntfs_attr_put_search_ctx(actx);
 		ntfs_index_ctx_put(ictx);
 		return STATUS_ERROR;
 	}
 
 	if (ntfs_index_rm(ictx)) {
-		ntfs_log_error("Failed to remove index entry of inode(%llu)\n",
-				(unsigned long long)parent_ni->mft_no);
+		ntfs_log_error("Failed to remove index entry of inode(%"PRIu64")\n",
+				parent_ni->mft_no);
 		ntfs_attr_put_search_ctx(actx);
 		ntfs_index_ctx_put(ictx);
 		return STATUS_ERROR;
@@ -2748,19 +2715,18 @@ create_lf:
 		ucs_namelen = ntfs_mbstoucs(FILENAME_LOST_FOUND, &ucs_name);
 		if (ucs_namelen != -1) {
 			lf_ni = ntfs_create(ni, 0, ucs_name, ucs_namelen, S_IFDIR);
-			ntfs_log_info("%s(%llu) created\n", FILENAME_LOST_FOUND,
-					(unsigned long long)lf_ni->mft_no);
+			ntfs_log_info("%s(%"PRIu64") created\n", FILENAME_LOST_FOUND,
+					lf_ni->mft_no);
 		}
 		free(ucs_name);
 	} else {
 		lf_ni = ntfs_inode_open(vol, lf_mftno);
-		ntfs_log_info("%s(%llu) was already created\n", FILENAME_LOST_FOUND,
-				(unsigned long long)lf_ni->mft_no);
+		ntfs_log_info("%s(%"PRIu64") was already created\n",
+				FILENAME_LOST_FOUND, lf_ni->mft_no);
 
 		if (!(lf_ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
-			ntfs_log_error("%s(%llu) is not a directory, delete it\n",
-					FILENAME_LOST_FOUND,
-					(unsigned long long)lf_ni->mft_no);
+			ntfs_log_error("%s(%"PRIu64") is not a directory, delete it\n",
+					FILENAME_LOST_FOUND, lf_ni->mft_no);
 			_ntfsck_remove_index(ni, lf_ni);
 			ntfsck_check_non_resident_cluster(lf_ni, 0);
 			ntfsck_free_mft_records(vol, lf_ni);
@@ -2850,7 +2816,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
 					0, ctx)) {
 			ntfs_log_perror("Index root attribute missing in directory inode "
-					"%lld", (unsigned long long)dir->ni->mft_no);
+					"%"PRId64"", dir->ni->mft_no);
 			ntfs_attr_put_search_ctx(ctx);
 			goto err_continue;
 		}
@@ -2898,7 +2864,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 						ictx->name, ictx->name_len);
 			if (!ictx->ia_na) {
 				ntfs_log_perror("Failed to open index allocation of inode "
-						"%llu", (unsigned long long)dir->ni->mft_no);
+						"%"PRIu64"", dir->ni->mft_no);
 				goto err_continue;
 			}
 
@@ -3022,13 +2988,13 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	// For each mft record, verify that it contains a valid file record.
 	nr_mft_records = vol->mft_na->initialized_size >>
 			vol->mft_record_size_bits;
-	ntfs_log_verbose("Checking %lld MFT records.\n", (long long)nr_mft_records);
+	ntfs_log_verbose("Checking %"PRId64" MFT records.\n", nr_mft_records);
 
 	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++) {
 		ntfsck_verify_mft_record(vol, mft_num);
 	}
 
-	ntfs_log_info("Clear MFT bitmap count:%lld\n", (unsigned long long)clear_mft_cnt);
+	ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
 
 	/*
 	 * $MFT could be updated after reviving orphaned mft entries.
@@ -3191,7 +3157,8 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 
 		/* Check if data size is valid. */
 		max_lcnbmp_size = (vol->nr_clusters + 7) >> 3;
-		ntfs_log_verbose("max_lcnbmp_size : %ld, lcnbmp data_size : %ld\n",
+		ntfs_log_verbose("max_lcnbmp_size : %"PRId64", "
+				"lcnbmp data_size : %"PRId64"\n",
 				max_lcnbmp_size, vol->lcnbmp_na->data_size);
 		if (max_lcnbmp_size > vol->lcnbmp_na->data_size) {
 			u8 *zero_bm;
@@ -3199,8 +3166,9 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 			s64 zero_bm_size = max_lcnbmp_size -
 						vol->lcnbmp_na->data_size;
 
-			check_failed("$Bitmap size is smaller than expected (%ld < %ld)",
-						max_lcnbmp_size, vol->lcnbmp_na->data_size);
+			check_failed("$Bitmap size is smaller than expected "
+					"(%"PRId64"< %"PRId64")",
+					max_lcnbmp_size, vol->lcnbmp_na->data_size);
 
 			if (ntfsck_ask_repair(vol)) {
 				zero_bm = ntfs_calloc(max_lcnbmp_size -
@@ -3215,7 +3183,8 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 						zero_bm_size, zero_bm);
 				ntfs_free(zero_bm);
 				if (written != zero_bm_size) {
-					ntfs_log_error("lcn bitmap write failed, pos : %ld, count : %ld, written : %ld\n",
+					ntfs_log_error("lcn bitmap write failed, pos:%"PRId64", "
+							"count:%"PRId64", written:%"PRId64"\n",
 							vol->lcnbmp_na->data_size,
 							zero_bm_size, written);
 					return -EIO;
@@ -3269,7 +3238,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			else {
 				sys_ni = ntfs_inode_open(vol, mft_num);
 				if (!sys_ni) {
-					ntfs_log_error("Failed to open %ld system file\n",
+					ntfs_log_error("Failed to open %"PRId64" system file\n",
 							mft_num);
 					goto put_index_ctx;
 				}
@@ -3292,7 +3261,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
 				CASE_SENSITIVE, 0, NULL, 0, sys_ctx);
 		if (err) {
-			ntfs_log_error("Failed to lookup file name attribute of %ld system file\n",
+			ntfs_log_error("Failed to lookup file name attribute of %"PRId64" system file\n",
 					mft_num);
 			ntfs_attr_put_search_ctx(sys_ctx);
 			ntfs_inode_close(sys_ni);
@@ -3309,7 +3278,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		 */
 		if (ntfs_index_lookup(fn, le32_to_cpu(sys_ctx->attr->value_length),
 					ictx)) {
-			ntfs_log_error("Failed to find index entry of %ld system file\n",
+			ntfs_log_error("Failed to find index entry of %"PRId64" system file\n",
 					mft_num);
 			ntfs_attr_put_search_ctx(sys_ctx);
 			ntfs_inode_close(sys_ni);

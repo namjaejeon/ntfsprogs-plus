@@ -600,7 +600,8 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 
 		if (data_size > ictx->ia_na->data_size) {
-			check_failed("VCN(%ld) in INDEX NODE exceed data_size of ia attr", vcn);
+			check_failed("VCN(%llu) in INDEX NODE exceed data_size of ia attr",
+					(unsigned long long)vcn);
 			if (ntfsck_ask_repair(vol)) {
 				VCN vcn_idx, end_vcn_idx;
 
