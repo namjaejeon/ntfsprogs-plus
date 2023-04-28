@@ -3702,6 +3702,9 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 			    || (le32_to_cpu(ir->index.allocated_size) & 7)
 			    || (le32_to_cpu(ir->index.index_length)
 				< le32_to_cpu(ir->index.entries_offset))
+			    || (le32_to_cpu(ir->index.entries_offset) & 7)
+			    || (le32_to_cpu(ir->index.entries_offset)
+				!= sizeof(INDEX_HEADER))
 			    || (le32_to_cpu(ir->index.allocated_size)
 				< le32_to_cpu(ir->index.index_length))
 			    || (le32_to_cpu(a->value_length)
@@ -3786,15 +3789,14 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 			}
 			break;
 		case AT_INDEX_ALLOCATION :
-			/* TODO: check index_header's length and allocated size */
+
 			if (!a->non_resident) {
 				ntfs_log_error("Corrupt index allocation"
-					" in MFT record %lld",
-					(long long)inum);
+					" in MFT record %lld", (long long)inum);
 				errno = EIO;
 				ret = -1;
 			}
-			/* TODO: check cluster run list here? or outside? */
+
 			break;
 		default :
 			break;
