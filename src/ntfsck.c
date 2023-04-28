@@ -1790,6 +1790,9 @@ static int ntfsck_decompose_setbit_runlist(ntfs_attr *na, struct rl_size *rls,
 	runlist *rl = NULL;
 	int ret = STATUS_OK;
 
+	if (!na || !na->ni)
+		return STATUS_ERROR;
+
 	rl = ntfsck_decompose_runlist(na, need_fix);
 	if (!rl) {
 		ntfs_log_error("Failed to get cluster run in directory(%"PRId64")",
@@ -1812,6 +1815,7 @@ static int ntfsck_decompose_setbit_runlist(ntfs_attr *na, struct rl_size *rls,
 			na->ni->mft_no);
 	ntfs_dump_runlist(rl);
 #endif
+
 	return 0;
 }
 
@@ -1842,9 +1846,132 @@ static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size)
 	return STATUS_OK;
 }
 
+static int _ntfsck_check_data_attr(ntfs_attr *na, ntfs_attr_search_ctx *actx,
+		struct rl_size *rls)
+{
+	ntfs_inode *ni;
+	ntfs_inode *base_ni;
+	ntfs_volume *vol;
+	ATTR_RECORD *attr;
+	FILE_ATTR_FLAGS si_flags; /* $STANDARD_INFORMATION flags */
+	FILE_ATTR_FLAGS si_cs_flags; /* $STD_INFO compressed-sparse flags */
+	ATTR_FLAGS cs_flags;      /* $DATA compressed-sparse flags */
+
+	if (!na || !na->ni || !actx || !actx->ntfs_ino)
+		return STATUS_ERROR;
+
+	base_ni = na->ni;
+	ni = actx->ntfs_ino;
+	vol = base_ni->vol;
+
+	si_flags = base_ni->flags;
+	si_cs_flags = si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED);
+	cs_flags = na->data_flags & (ATTR_IS_SPARSE | ATTR_IS_COMPRESSED);
+
+	attr = actx->attr;
+
+	if (cs_flags) {
+		if (cs_flags & ATTR_IS_SPARSE) {
+			/* sparse file */
+			if (!(si_cs_flags & FILE_ATTR_SPARSE_FILE)) {
+				check_failed("Sparse flags of $STD_INFO and DATA in inode(%"PRIu64") "
+						"are different. Set sparse to inode",
+						base_ni->mft_no);
+
+				if (ntfsck_ask_repair(vol)) {
+					si_flags &= ~FILE_ATTR_COMPRESSED;
+					si_flags |= FILE_ATTR_SPARSE_FILE;
+					base_ni->flags = si_flags;
+
+					ntfs_inode_mark_dirty(base_ni);
+					NInoFileNameSetDirty(base_ni);
+					fsck_err_fixed();
+				}
+			}
+		} else if (cs_flags & ATTR_IS_COMPRESSED) {
+			if (!(si_cs_flags & FILE_ATTR_COMPRESSED)) {
+				check_failed("Compressed flags of $STD_INFO and DATA in inode(%"PRIu64") "
+						"are different. Set compressed to inode.",
+						base_ni->mft_no);
+
+				if (ntfsck_ask_repair(vol)) {
+					si_flags &= ~FILE_ATTR_SPARSE_FILE;
+					si_flags |= FILE_ATTR_COMPRESSED;
+					ni->flags = si_flags;
+
+					ntfs_inode_mark_dirty(base_ni);
+					NInoFileNameSetDirty(base_ni);
+					fsck_err_fixed();
+				}
+			}
+		}
+
+		if ((base_ni->allocated_size != na->compressed_size) ||
+				(na->compressed_size != rls->real_size)) {
+			/* TODO: need to set allocated_size & highest_vcn set */
+			check_failed("Corrupted inode(%"PRIu64") compressed size field.\n "
+					"inode allocated size(%"PRIu64"), "
+					"$DATA compressed(%"PRIu64") "
+					"cluster run real allocation(%"PRIu64").",
+					base_ni->mft_no, base_ni->allocated_size,
+					na->compressed_size, rls->real_size);
+			if (ntfsck_ask_repair(vol)) {
+				na->compressed_size = rls->real_size;
+				base_ni->allocated_size = na->compressed_size;
+				attr->compressed_size = cpu_to_sle64(na->compressed_size);
+
+				ntfs_inode_mark_dirty(ni);
+				ntfs_inode_mark_dirty(base_ni);
+				NInoFileNameSetDirty(base_ni);
+				fsck_err_fixed();
+			}
+		}
+	} else {
+		if (si_cs_flags) {
+			check_failed("Sparse/Compressed flags of $STD_INFO and DATA in inode(%"PRIu64") "
+					"are different. Clear flag of inode.",
+					base_ni->mft_no);
+
+			if (ntfsck_ask_repair(vol)) {
+				si_flags &= ~(FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED);
+				base_ni->flags = si_flags;
+
+				ntfs_inode_mark_dirty(base_ni);
+				NInoFileNameSetDirty(base_ni);
+				fsck_err_fixed();
+			}
+		}
+
+		if ((base_ni->allocated_size != na->allocated_size) ||
+				(na->allocated_size != rls->real_size)) {
+			/* TODO: need to set allocated_size & highest_vcn set */
+			check_failed("Corrupted inode(%"PRIu64") allocated size field.\n "
+					"inode allocated size(%"PRIu64"), "
+					"$DATA allocated(%"PRIu64"), "
+					"cluster run(total(%"PRIu64"):real(%"PRIu64") allocation.",
+					base_ni->mft_no, ni->allocated_size,
+					na->allocated_size, rls->alloc_size,
+					rls->real_size);
+			if (ntfsck_ask_repair(vol)) {
+				na->allocated_size = rls->real_size;
+				base_ni->allocated_size = na->allocated_size;
+				attr->allocated_size = cpu_to_sle64(na->allocated_size);
+
+				ntfs_inode_mark_dirty(ni);
+				ntfs_inode_mark_dirty(base_ni);
+				NInoFileNameSetDirty(base_ni);
+				fsck_err_fixed();
+			}
+		}
+	}
+
+	return STATUS_OK;
+}
+
 static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls)
 {
 	BOOL need_fix = FALSE;
+	ntfs_attr_search_ctx *actx;
 	ntfs_volume *vol;
 	ntfs_inode *ni;
 	struct rl_size rls = {0, };
@@ -1878,6 +2005,24 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls
 
 			fsck_err_fixed();
 		}
+	}
+
+	/*
+	 * ntfsck_update_runlist will set appropriate flag
+	 * and fields of attribute structure at ntfs_attr_update_meta(),
+	 * that is also including compressed_size and flags.
+	 */
+
+	if (na->type == AT_DATA && need_fix == FALSE &&
+			!(ni->flags & FILE_ATTR_SYSTEM)) {
+		/* check flag & length for $DATA */
+
+		actx = ntfs_attr_get_search_ctx(ni, NULL);
+		if (!actx)
+			return STATUS_ERROR;
+
+		_ntfsck_check_data_attr(na, actx, &rls);
+		ntfs_attr_put_search_ctx(actx);
 	}
 
 	if (out_rls)
@@ -1985,94 +2130,13 @@ init_all:
 
 static int ntfsck_check_file(ntfs_inode *ni)
 {
-	ntfs_volume *vol;
-	ntfs_attr *na = NULL;
-	int ret = 0;
-	FILE_ATTR_FLAGS si_flags; /* $STANDARD_INFORMATION flags */
-	FILE_ATTR_FLAGS si_cs_flags; /* $STD_INFO compressed-sparse flags */
-	ATTR_FLAGS cs_flags;      /* $DATA compressed-sparse flags */
-
-	if (!ni)
-		return STATUS_ERROR;
-
-	vol = ni->vol;
-
-	na = ntfs_attr_open(ni, AT_DATA, AT_UNNAMED, 0);
-	if (!na) {
-		ntfs_log_perror("Failed to open $DATA of inode(%"PRIu64")", ni->mft_no);
-		return STATUS_ERROR;
-	}
-
 	/*
-	 * ntfsck_check_non_resident_attr(), which has already been called
-	 * in ntfsck_check_inode(), will set appropriate flag
-	 * and fields of attribute structure at ntfs_attr_update_meta(),
-	 * that is also including compressed_size
-	 * in case that sparse/compressed flags set.
+	 * nothing to do here, because size & flags checking in
+	 * ntfsck_check_non_resident_attr().
 	 */
 
-	si_flags = ni->flags;
-	si_cs_flags = si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED);
-	cs_flags = na->data_flags & (ATTR_IS_SPARSE | ATTR_IS_COMPRESSED);
-
-	if (cs_flags & ATTR_IS_SPARSE) {
-		/* sparse file */
-		if (!(si_cs_flags & FILE_ATTR_SPARSE_FILE)) {
-			check_failed("Sparse flags of $STD_INFO and DATA in inode(%"PRIu64") "
-					"are different. Set sparse to inode",
-					ni->mft_no);
-
-			if (ntfsck_ask_repair(vol)) {
-				si_flags &= ~FILE_ATTR_COMPRESSED;
-				si_flags |= FILE_ATTR_SPARSE_FILE;
-				ni->flags = si_flags;
-
-				ntfs_inode_mark_dirty(ni);
-				NInoFileNameSetDirty(ni);
-				fsck_err_fixed();
-			}
-		}
-	} else if (cs_flags & ATTR_IS_COMPRESSED) {
-		if (!(si_cs_flags & FILE_ATTR_COMPRESSED)) {
-			check_failed("Compressed flags of $STD_INFO and DATA in inode(%"PRIu64") "
-					"are different. Set compressed to inode.",
-					ni->mft_no);
-
-			if (ntfsck_ask_repair(vol)) {
-				si_flags &= ~FILE_ATTR_SPARSE_FILE;
-				si_flags |= FILE_ATTR_COMPRESSED;
-				ni->flags = si_flags;
-
-				ntfs_inode_mark_dirty(ni);
-				NInoFileNameSetDirty(ni);
-				fsck_err_fixed();
-			}
-		}
-	} else if (!cs_flags) {
-		if (si_cs_flags) {
-			check_failed("Sparse/Compressed flags of $STD_INFO and DATA in inode(%"PRIu64") "
-					"are different. Clear flag of inode.",
-					ni->mft_no);
-
-			if (ntfsck_ask_repair(vol)) {
-				si_flags &= ~(FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED);
-				ni->flags = si_flags;
-
-				ntfs_inode_mark_dirty(ni);
-				NInoFileNameSetDirty(ni);
-				fsck_err_fixed();
-			}
-		}
-	}
-
-	/* TODO: is it need to check length? */
-
-	/*
-	 * if rl is allocated in ntfsck_decompose_runlist(),
-	 * will be freed in ntfs_attr_close()
-	 */
-	ntfs_attr_close(na);
-	return ret;
+	/* TODO: add more checking routine for file */
+	return STATUS_OK;
 }
 
 /* called after ntfs_inode_attatch_all_extents() is called */
