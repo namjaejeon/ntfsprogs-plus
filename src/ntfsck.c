@@ -63,6 +63,9 @@
 #define RETURN_SHARED_LIBRARY_ERROR (128)
 
 #define FILENAME_LOST_FOUND "lost+found"
+#define FILENAME_PREFIX_LOST_FOUND "FSCK_#"
+/* 'FSCK_#'(6) + u64 max string(20) + 1(for NULL) */
+#define MAX_FILENAME_LEN_LOST_FOUND	(26)
 
 /* todo: command line: (everything is optional)
  *  fsck-frontend options:
@@ -779,9 +782,14 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 		ntfs_attr_search_ctx *ctx)
 {
+	FILE_NAME_ATTR *new_fn = NULL;
 	ntfs_volume *vol;
-	ntfs_inode *lost_found;
+	ntfs_inode *lost_found = NULL;
+	ntfschar *ucs_name = (ntfschar *)NULL;
+	int ucs_namelen;
+	int fn_len;
 	int ret = STATUS_ERROR;
+	char filename[MAX_FILENAME_LEN_LOST_FOUND] = {0, };
 
 	if (!ni) {
 		ntfs_log_error("inode point is NULL\n");
@@ -795,8 +803,69 @@ static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 		return ret;
 	}
 
+	/* rename 'FSCK_#' + 'mft_no' */
+	snprintf(filename, MAX_FILENAME_LEN_LOST_FOUND, "%s%"PRIu64"",
+			FILENAME_PREFIX_LOST_FOUND, ni->mft_no);
+	ucs_namelen = ntfs_mbstoucs(filename, &ucs_name);
+
+	fn_len = sizeof(FILE_NAME_ATTR) + ucs_namelen * sizeof(ntfschar);
+	new_fn = ntfs_calloc(fn_len);
+	if (!new_fn)
+		goto err_out;
+
+	/* parent_directory over-write in ntfsck_add_inode_to_parent() */
+	memcpy(new_fn, fn, sizeof(FILE_NAME_ATTR));
+	memcpy(new_fn->file_name, ucs_name, ucs_namelen * sizeof(ntfschar));
+	new_fn->file_name_length = ucs_namelen;
+
+	ntfs_attr_reinit_search_ctx(ctx);
+	fn = ntfsck_find_file_name_attr(ni, fn, ctx);
+
+	if (ntfs_attr_record_rm(ctx)) {
+		ntfs_log_error("Failed to remove $FN(%"PRIu64")\n", ni->mft_no);
+		goto err_out;
+	}
+
+	ntfs_attr_reinit_search_ctx(ctx);
+	ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+			CASE_SENSITIVE, 0, NULL, 0, ctx);
+	if (!ret) {
+		ntfs_log_error("Still $FN exist!! remove it\n");
+
+		if (ntfs_attr_record_rm(ctx)) {
+			ntfs_log_error("Failed to remove $FN(%"PRIu64")\n", ni->mft_no);
+			goto err_out;
+		}
+	}
+
+	/* Add FILE_NAME attribute to inode. */
+	if (ntfs_attr_add(ni, AT_FILE_NAME, AT_UNNAMED, 0, (u8 *)new_fn, fn_len)) {
+		ntfs_log_error("Failed to add $FN(%"PRIu64")\n", ni->mft_no);
+		goto err_out;
+	}
+
+	ntfs_attr_reinit_search_ctx(ctx);
+	ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+			CASE_SENSITIVE, 0, NULL, 0, ctx);
+	if (ret) {
+		/* $FILE_NAME lookup failed */
+		ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%"PRIu64")\n",
+				ni->mft_no);
+		goto err_out;
+	}
+
+	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+			le16_to_cpu(ctx->attr->value_offset));
+
 	ret = ntfsck_add_inode_to_parent(vol, lost_found, ni, fn, ctx);
-	ntfs_inode_close(lost_found);
+
+err_out:
+	if (ucs_name)
+		free(ucs_name);
+	if (new_fn)
+		ntfs_free(new_fn);
+	if (lost_found)
+		ntfs_inode_close(lost_found);
 	return ret;
 }
 
