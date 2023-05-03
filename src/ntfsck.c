@@ -2928,10 +2928,16 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 	dir = (struct dir *)calloc(1, sizeof(struct dir));
 	if (!dir) {
 		ntfs_log_error("Failed to allocate for subdir.\n");
-		return 1;
+		return -1;
 	}
 
-	ni = ntfsck_check_root_inode(vol);
+	ni = ntfs_inode_open(vol, FILE_root);
+	if (!ni) {
+		ntfs_log_error("Failed to open root inode\n");
+		return -1;
+	}
+
+
 	ntfsck_check_lost_found(vol, ni);
 
 	dir->ni = ni;
@@ -3342,7 +3348,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 
 	fsck_start_step("Check system files...\n");
 
-	root_ni = ntfs_inode_open(vol, FILE_root);
+	root_ni = ntfsck_check_root_inode(vol);
 	if (!root_ni) {
 		ntfs_log_error("Couldn't open the root directory.\n");
 		return 1;
