@@ -1826,7 +1826,6 @@ ntfs_inode *ntfs_mft_record_alloc(ntfs_volume *vol, ntfs_inode *base_ni)
 
 	mft_na = vol->mft_na;
 	mftbmp_na = vol->mftbmp_na;
-retry:	
 	bit = ntfs_mft_bitmap_find_free_rec(vol, base_ni);
 	if (bit >= 0) {
 		ntfs_log_debug("found free record (#1) at %lld\n",
@@ -1936,13 +1935,6 @@ found_free_rec:
 	if (oldwarn)
 		NVolClearNoFixupWarn(vol);
 
-	/* Sanity check that the mft record is really not in use. */
-	if (ntfs_is_file_record(m->magic) && (m->flags & MFT_RECORD_IN_USE)) {
-		ntfs_log_error("Inode %lld is used but it wasn't marked in "
-			       "$MFT bitmap. Fixed.\n", (long long)bit);
-		free(m);
-		goto retry;
-	}
 	seq_no = m->sequence_number;
 		/*
 		 * As ntfs_mft_record_read() returns what has been read
