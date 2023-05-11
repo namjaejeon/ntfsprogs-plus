@@ -2849,13 +2849,18 @@ create_lf:
 		ucs_namelen = ntfs_mbstoucs(FILENAME_LOST_FOUND, &ucs_name);
 		if (ucs_namelen != -1) {
 			lf_ni = ntfs_create(ni, 0, ucs_name, ucs_namelen, S_IFDIR);
+			if (!lf_ni) {
+				free(ucs_name);
+				return;
+			}
+
 			ntfs_log_info("%s(%"PRIu64") created\n", FILENAME_LOST_FOUND,
 					lf_ni->mft_no);
 		}
 		free(ucs_name);
 	} else {
 		lf_ni = ntfs_inode_open(vol, lf_mftno);
-		ntfs_log_verbose("%s(%"PRIu64") was already created\n",
+		ntfs_log_verbose("%s(%"PRIu64") was ialready created\n",
 				FILENAME_LOST_FOUND, lf_ni->mft_no);
 
 		if (!(lf_ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
