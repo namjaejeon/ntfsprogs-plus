@@ -369,9 +369,10 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 		}
 	}
 
-	ntfs_log_info("Total lcn bitmap clear:%"PRId64", "
-			"Total missing lcn bitmap:%"PRId64"\n",
-			clear_lcn_cnt, set_lcn_cnt);
+	if (clear_lcn_cnt || set_lcn_cnt)
+		ntfs_log_info("Total lcn bitmap clear:%"PRId64", "
+			      "Total missing lcn bitmap:%"PRId64"\n",
+			      clear_lcn_cnt, set_lcn_cnt);
 
 	fsck_end_step();
 }
@@ -2854,7 +2855,7 @@ create_lf:
 		free(ucs_name);
 	} else {
 		lf_ni = ntfs_inode_open(vol, lf_mftno);
-		ntfs_log_info("%s(%"PRIu64") was already created\n",
+		ntfs_log_verbose("%s(%"PRIu64") was already created\n",
 				FILENAME_LOST_FOUND, lf_ni->mft_no);
 
 		if (!(lf_ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
@@ -3133,7 +3134,8 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 		ntfsck_verify_mft_record(vol, mft_num);
 	}
 
-	ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
+	if (clear_mft_cnt)
+		ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
 
 	/*
 	 * $MFT could be updated after reviving orphaned mft entries.
