@@ -343,12 +343,12 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 						fsck_err_found();
 						clear_lcn_cnt++;
 						ntfs_log_trace("Found orphaned cluster bit(%"PRId64") "
-								" in $Bitmap. Clear it", cl);
+								" in $Bitmap. Clear it\n", cl);
 					} else {
 						fsck_err_found();
 						set_lcn_cnt++;
 						ntfs_log_trace("Found missing cluster bit(%"PRId64") "
-							"in $Bitmap. Set it", cl);
+							"in $Bitmap. Set it\n", cl);
 					}
 					if (_ntfsck_ask_repair(vol, FALSE)) {
 						ntfs_bit_set(bm, i * 8 + cl % 8, !lbmp_bit);
@@ -1076,32 +1076,42 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		return;
 	}
 
-	mft_no = ni->mft_no;
-	if (!is_used) {
-		check_failed("Found an orphaned file(mft no: %"PRId64"). "
-				"Try to add index entry", mft_num);
-		if (ntfsck_ask_repair(vol)) {
-			/* close inode to avoid nested call of ntfs_inode_open() */
-			ntfs_inode_close(ni);
+	if (is_used) {
+		ntfsck_update_lcn_bitmap(ni);
+		ntfs_inode_close(ni);
+		return;
+	}
 
-			if (ntfsck_add_index_entry_orphaned_file(vol, mft_no)) {
-				/*
-				 * error returned.
-				 * inode is already freed and closed in that function,
-				 * do not need to call ntfs_inode_close()
-				 */
-				return;
-			}
-			fsck_err_fixed();
-		} else {
+	/* set mft bitmap on disk, but not set in fsck mft bitmap */
+
+	if (utils_is_metadata(ni) == 1) {
+		ntfs_log_info("Metadata %"PRIu64" is found as orphaned file\n",
+				ni->mft_no);
+		ntfs_inode_close(ni);
+		return;
+	}
+
+	mft_no = ni->mft_no;
+	check_failed("Found an orphaned file(mft no: %"PRId64"). "
+			"Try to add index entry", mft_num);
+	if (ntfsck_ask_repair(vol)) {
+		/* close inode to avoid nested call of ntfs_inode_open() */
+		ntfs_inode_close(ni);
+
+		if (ntfsck_add_index_entry_orphaned_file(vol, mft_no)) {
 			/*
-			 * Update number of clusters that is used for each
-			 * non-resident mft entries to bitmap.
+			 * error returned.
+			 * inode is already freed and closed in that function,
+			 * do not need to call ntfs_inode_close()
 			 */
-			ntfsck_update_lcn_bitmap(ni);
-			ntfs_inode_close(ni);
+			return;
 		}
+		fsck_err_fixed();
 	} else {
+		/*
+		 * Update number of clusters that is used for each
+		 * non-resident mft entries to bitmap.
+		 */
 		ntfsck_update_lcn_bitmap(ni);
 		ntfs_inode_close(ni);
 	}
@@ -1363,7 +1373,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	/* check $FN size fields */
 	if (ni->allocated_size != sle64_to_cpu(ie_fn->allocated_size)) {
 		check_failed("Allocated size is different "
-				"(IDX/$FN:%"PRIu64"MFT/$DATA:%"PRIu64") "
+				"(IDX/$FN:%"PRIu64" MFT/$DATA:%"PRIu64") "
 				"on inode(%"PRIu64", %s). Fix it.",
 				sle64_to_cpu(ie_fn->allocated_size),
 				ni->allocated_size, ni->mft_no, filename);
@@ -1376,7 +1386,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 */
 	if (ni->data_size != ie_fn->data_size) {
 		check_failed("Data size is different "
-				"(IDX/$FN:%"PRIu64"MFT/$DATA:%"PRIu64") "
+				"(IDX/$FN:%"PRIu64" MFT/$DATA:%"PRIu64") "
 				"on inode(%"PRIu64", %s). Fix it.",
 				sle64_to_cpu(ie_fn->data_size),
 				ni->data_size, ni->mft_no, filename);
@@ -2424,6 +2434,36 @@ err_out:
 	return STATUS_ERROR;
 }
 
+static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
+		ntfs_index_context *ictx)
+{
+	int ret;
+
+	if (ni->attr_list) {
+		ntfsck_check_attr_list(ni);
+		ntfs_inode_attach_all_extents(ni);
+	}
+
+	ret = ntfsck_check_inode_non_resident(ni);
+	if (ret)
+		goto err_out;
+
+	/*
+	 * Directory system file is Root and $Extend only.
+	 * Root directory is already checked in ntfsck_check_system_files() */
+	if (ni->mrec->flags & MFT_RECORD_IS_DIRECTORY) {
+		ret = ntfsck_check_directory(ni);
+	}
+
+	/* TODO: check system file more detail respectively. */
+
+	ntfsck_set_mft_record_bitmap(ni);
+	return STATUS_OK;
+
+err_out:
+	return STATUS_ERROR;
+}
+
 /*
  * Check index and inode which is pointed by index.
  * if pointed inode is directory, then add it to ntfs_dir_list.
@@ -2466,7 +2506,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
 		/* skip checking for system files */
-		if (!(ni->flags & FILE_ATTR_SYSTEM)) {
+		if (!utils_is_metadata(ni)) {
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret) {
 				ntfs_log_info("Failed to check inode(%"PRIu64") "
@@ -2481,15 +2521,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			 * Do not check return value because system files can be deleted.
 			 * this check may be already done in check system files.
 			 */
-			if (ni->attr_list) {
-				ret = ntfsck_check_attr_list(ni);
-
-				/* for inode whose parent inode is system files */
-				ntfs_inode_attach_all_extents(ni);
-			}
-			ret = ntfsck_check_inode_non_resident(ni);
-
-			ntfsck_set_mft_record_bitmap(ni);
+			ret = ntfsck_check_system_inode(ni, ie, ictx);
 		}
 
 		if ((ie->key.file_name.file_attributes & FILE_ATTR_I30_INDEX_PRESENT) &&
@@ -2505,7 +2537,9 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			dir->ni = ni;
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 		} else {
-			ntfs_inode_close_in_dir(ni, ictx->ni);
+			ret = ntfs_inode_close_in_dir(ni, ictx->ni);
+			if (ret)
+				ntfs_inode_close(ni);
 		}
 	} else {
 
@@ -3129,9 +3163,8 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 			vol->mft_record_size_bits;
 	ntfs_log_verbose("Checking %"PRId64" MFT records.\n", nr_mft_records);
 
-	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++) {
+	for (mft_num = FILE_first_user; mft_num < nr_mft_records; mft_num++)
 		ntfsck_verify_mft_record(vol, mft_num);
-	}
 
 	ntfs_log_info("Clear MFT bitmap count:%"PRId64"\n", clear_mft_cnt);
 
