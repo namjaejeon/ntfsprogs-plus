@@ -514,10 +514,9 @@ int ntfs_inode_close(ntfs_inode *ni)
 	if (ni) {
 		debug_double_inode(ni->mft_no,0);
 		/* do not cache system files : could lead to double entries */
-		if (ni->vol && ni->vol->nidata_cache
-			&& ((ni->mft_no == FILE_root)
-			    || ((ni->mft_no >= FILE_first_user)
-				&& !(ni->mrec->flags & MFT_RECORD_IS_4)))) {
+		if (ni->vol && ni->vol->nidata_cache &&
+				((ni->mft_no == FILE_root) ||
+				 (!utils_is_metadata(ni)))) {
 			/* If we have dirty metadata, write it out. */
 			dirty = NInoDirty(ni) || NInoAttrListDirty(ni);
 			if (dirty) {
@@ -1396,7 +1395,7 @@ void ntfs_inode_update_times(ntfs_inode *ni, ntfs_time_update_flags mask)
 		return;
 	}
 
-	if ((ni->mft_no < FILE_first_user && ni->mft_no != FILE_root) ||
+	if ((utils_is_metadata(ni) && ni->mft_no != FILE_root) ||
 			NVolReadOnly(ni->vol) || !mask)
 		return;
 
@@ -1407,7 +1406,7 @@ void ntfs_inode_update_times(ntfs_inode *ni, ntfs_time_update_flags mask)
 		ni->last_data_change_time = now;
 	if (mask & NTFS_UPDATE_CTIME)
 		ni->last_mft_change_time = now;
-	
+
 	NInoFileNameSetDirty(ni);
 	NInoSetDirty(ni);
 }

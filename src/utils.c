@@ -903,6 +903,10 @@ int utils_is_metadata(ntfs_inode *inode)
 	if ((num != FILE_root) && (__metadata(vol, num) == 1))
 		return 1;
 
+	if ((inode->flags & (FILE_ATTR_SYSTEM | FILE_ATTR_HIDDEN)) ==
+			(FILE_ATTR_SYSTEM | FILE_ATTR_HIDDEN))
+		return 1;
+
 	return 0;
 }
 

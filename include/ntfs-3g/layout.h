@@ -251,10 +251,12 @@ typedef enum {
  *
  * These are the so far known MFT_RECORD_* flags (16-bit) which contain
  * information about the mft record in which they are present.
- * 
+ *
  * MFT_RECORD_IS_4 exists on all $Extend sub-files.
  * It seems that it marks it is a metadata file with MFT record >24, however,
  * it is unknown if it is limited to metadata files only.
+ * PS) above commens is wrong, sub-files of $Extend which is formatted
+ * in Windows 10 does not have MFT_RECORD_IS_4 flag.
  *
  * MFT_RECORD_IS_VIEW_INDEX exists on every metafile with a non directory
  * index, that means an INDEX_ROOT and an INDEX_ALLOCATION with a name other
