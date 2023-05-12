@@ -343,12 +343,12 @@ static void ntfsck_check_orphaned_clusters(ntfs_volume *vol)
 						fsck_err_found();
 						clear_lcn_cnt++;
 						ntfs_log_trace("Found orphaned cluster bit(%"PRId64") "
-								" in $Bitmap. Clear it\n", cl);
+								"in $Bitmap. Clear it\n", cl);
 					} else {
 						fsck_err_found();
 						set_lcn_cnt++;
 						ntfs_log_trace("Found missing cluster bit(%"PRId64") "
-							"in $Bitmap. Set it\n", cl);
+								"in $Bitmap. Set it\n", cl);
 					}
 					if (_ntfsck_ask_repair(vol, FALSE)) {
 						ntfs_bit_set(bm, i * 8 + cl % 8, !lbmp_bit);
@@ -618,6 +618,7 @@ static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 	while (ni->nr_extents) {
 		free_inode = *(ni->extent_nis);
 		free_mftno = free_inode->mft_no;
+
 		if (ntfs_mft_record_free(vol, free_inode))
 			ntfs_log_error("Failed to free extent MFT record(%"PRIu64":%"PRIu64"). "
 					"Leaving inconsistent metadata.\n",
@@ -658,6 +659,7 @@ static int ntfsck_find_and_check_index(ntfs_inode *parent_ni, ntfs_inode *ni,
 		if (check_flag == FALSE) {
 			ntfs_log_error("Index already exist in parent, delete inode(%"PRIu64")\n",
 					ni->mft_no);
+			errno = EEXIST;
 			ntfs_index_ctx_put(ictx);
 			return STATUS_ERROR;
 		}
@@ -1010,6 +1012,13 @@ next_inode:
 	return ret;
 
 delete_inode:
+	/* Do not delete system file */
+	if (ni && utils_is_metadata(ni) == 1) {
+		ntfs_inode_close(ni);
+		goto next_inode;
+	} else if (of->mft_no < FILE_first_user)
+		goto next_inode;
+
 	if (ni) {
 		ntfsck_check_non_resident_cluster(ni, 0);
 		ntfsck_free_mft_records(vol, ni);
@@ -1029,7 +1038,6 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	int is_used;
 	int always_exist_sys_meta_num = vol->major_ver >= 3 ? 11 : 10;
 	ntfs_inode *ni;
-	s64 mft_no = -1;
 
 	is_used = utils_mftrec_in_use(vol, mft_num);
 	if (is_used < 0) {
@@ -1092,14 +1100,13 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		return;
 	}
 
-	mft_no = ni->mft_no;
 	check_failed("Found an orphaned file(mft no: %"PRId64"). "
 			"Try to add index entry", mft_num);
 	if (ntfsck_ask_repair(vol)) {
 		/* close inode to avoid nested call of ntfs_inode_open() */
 		ntfs_inode_close(ni);
 
-		if (ntfsck_add_index_entry_orphaned_file(vol, mft_no)) {
+		if (ntfsck_add_index_entry_orphaned_file(vol, mft_num)) {
 			/*
 			 * error returned.
 			 * inode is already freed and closed in that function,
@@ -2400,8 +2407,7 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		if (ntfsck_check_attr_list(ni))
 			goto err_out;
 
-		if (ntfs_inode_attach_all_extents(ni))
-			goto err_out;
+		ntfs_inode_attach_all_extents(ni);
 	}
 
 	ret = ntfsck_check_inode_non_resident(ni);
@@ -2507,7 +2513,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
 		/* skip checking for system files */
-		if (!utils_is_metadata(ni)) {
+		if (!utils_is_metadata(ni) && !utils_is_metadata(ictx->ni)) {
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret) {
 				ntfs_log_info("Failed to check inode(%"PRIu64") "
@@ -2738,7 +2744,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		ie_fn = &ie->key.file_name;
 		mref = le64_to_cpu(ie->indexed_file);
 		ntfs_log_info("Inserting entry to index root, mref : %"PRIu64", %s\n",
-			      le64_to_cpu(ie->indexed_file),
+			      MREF(le64_to_cpu(ie->indexed_file)),
 			      ntfs_attr_name_get(ie_fn->file_name,
 			      ie_fn->file_name_length));
 
@@ -2791,7 +2797,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 			ie_fn = &ie->key.file_name;
 			mref = le64_to_cpu(ie->indexed_file);
 			ntfs_log_info("Inserting entry to $IA, mref : %"PRIu64", %s\n",
-				      le64_to_cpu(ie->indexed_file),
+				      MREF(le64_to_cpu(ie->indexed_file)),
 				      ntfs_attr_name_get(ie_fn->file_name,
 				      ie_fn->file_name_length));
 
@@ -2900,21 +2906,27 @@ create_lf:
 		ntfs_log_verbose("%s(%"PRIu64") was already created\n",
 				FILENAME_LOST_FOUND, lf_ni->mft_no);
 
-		if (!(lf_ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
+		if (lf_ni && !(lf_ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
+			int ret = STATUS_OK;
+
 			ntfs_log_error("%s(%"PRIu64") is not a directory, delete it\n",
 					FILENAME_LOST_FOUND, lf_ni->mft_no);
-			_ntfsck_remove_index(ni, lf_ni);
-			ntfsck_check_non_resident_cluster(lf_ni, 0);
-			ntfsck_free_mft_records(vol, lf_ni);
-			lf_ni = NULL;
+			ret = _ntfsck_remove_index(ni, lf_ni);
+			if (!ret) {
+				ntfsck_check_non_resident_cluster(lf_ni, 0);
+				ntfsck_free_mft_records(vol, lf_ni);
+				goto create_lf;
+			}
 
-			goto create_lf;
+			ntfs_log_error("Failed to remove index of %s(%"PRIu64")\n",
+					FILENAME_LOST_FOUND, lf_ni->mft_no);
+			ntfs_inode_close(lf_ni);
+			lf_ni = NULL;
 		}
 	}
 
 	if (!lf_ni) {
-		ntfs_log_debug("Failed to open '%s' inode\n", FILENAME_LOST_FOUND);
-		/* do not return */
+		ntfs_log_error("Failed to open/check '%s'\n", FILENAME_LOST_FOUND);
 	} else {
 		vol->lost_found = lf_ni->mft_no;
 		ntfs_inode_close(lf_ni);
@@ -2977,7 +2989,6 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		ntfs_log_error("Failed to open root inode\n");
 		return -1;
 	}
-
 
 	ntfsck_check_lost_found(vol, ni);
 
@@ -3385,14 +3396,15 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	ntfs_index_context *ictx;
 	FILE_NAME_ATTR *fn;
 	s64 mft_num;
-	int err;
+	int ret = STATUS_ERROR;
+	int is_used;
 
 	fsck_start_step("Check system files...\n");
 
 	root_ni = ntfsck_check_root_inode(vol);
 	if (!root_ni) {
 		ntfs_log_error("Couldn't open the root directory.\n");
-		return 1;
+		return ret;
 	}
 
 	root_ctx = ntfs_attr_get_search_ctx(root_ni, NULL);
@@ -3411,6 +3423,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	for (mft_num = FILE_MFT; mft_num < FILE_first_user; mft_num++) {
 		if (vol->major_ver < 3 && mft_num == FILE_Extend)
 			continue;
+
 		sys_ni = ntfsck_get_opened_ni_vol(vol, mft_num);
 		if (!sys_ni) {
 			if (mft_num == FILE_root)
@@ -3420,9 +3433,18 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 				if (!sys_ni) {
 					ntfs_log_error("Failed to open %"PRId64" system file\n",
 							mft_num);
+					ret = STATUS_ERROR;
 					goto put_index_ctx;
 				}
 			}
+		}
+
+		is_used = utils_mftrec_in_use(vol, mft_num);
+		if (is_used < 0) {
+			ntfs_log_error("MFT bitmap of system file(%"PRIu64") "
+					"is not set\n", mft_num);
+			ret = STATUS_ERROR;
+			goto put_index_ctx;
 		}
 
 		ntfsck_update_lcn_bitmap(sys_ni);
@@ -3435,12 +3457,13 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		sys_ctx = ntfs_attr_get_search_ctx(sys_ni, NULL);
 		if (!sys_ctx) {
 			ntfs_inode_close(sys_ni);
+			ret = STATUS_ERROR;
 			goto put_index_ctx;
 		}
 
-		err = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
+		ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
 				CASE_SENSITIVE, 0, NULL, 0, sys_ctx);
-		if (err) {
+		if (ret) {
 			ntfs_log_error("Failed to lookup file name attribute of %"PRId64" system file\n",
 					mft_num);
 			ntfs_attr_put_search_ctx(sys_ctx);
@@ -3456,20 +3479,22 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		 * the index entries for system files is in the $INDEX_ROOT
 		 * of the $Root mft entry using ntfs_index_lookup().
 		 */
-		if (ntfs_index_lookup(fn, le32_to_cpu(sys_ctx->attr->value_length),
-					ictx)) {
-			ntfs_log_error("Failed to find index entry of %"PRId64" system file\n",
+		ret = ntfs_index_lookup(fn,
+				le32_to_cpu(sys_ctx->attr->value_length), ictx);
+		if (ret) {
+			ntfs_log_error("Failed to find index entry of inode(%"PRId64") system file\n",
 					mft_num);
 			ntfs_attr_put_search_ctx(sys_ctx);
 			ntfs_inode_close(sys_ni);
+			ret = STATUS_ERROR;
 			goto put_index_ctx;
 		}
 
 		/* TODO: Validate index entry of system file */
 
 		/* Validate mft entry of system file */
-		err = ntfsck_validate_system_file(sys_ni);
-		if (err)
+		ret = ntfsck_validate_system_file(sys_ni);
+		if (ret)
 			goto put_index_ctx;
 
 		ntfs_index_ctx_reinit(ictx);
@@ -3488,7 +3513,7 @@ close_inode:
 
 	fsck_end_step();
 
-	return 0;
+	return ret;
 }
 
 /**
@@ -3647,7 +3672,8 @@ conflict_option:
 		}
 	}
 
-	ntfsck_check_system_files(vol);
+	if (ntfsck_check_system_files(vol))
+		goto err_out;
 
 	if (ntfsck_replay_log(vol))
 		goto err_out;
