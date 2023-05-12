@@ -2869,7 +2869,7 @@ static int _ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_inode *ni)
 
 static void ntfsck_check_lost_found(ntfs_volume *vol, ntfs_inode *ni)
 {
-	ntfs_inode *lf_ni;	/* lost+found inode */
+	ntfs_inode *lf_ni = NULL; /* lost+found inode */
 	ntfschar *ucs_name = (ntfschar *)NULL;
 	int ucs_namelen;
 	u64 lf_mftno = (u64)-1; /* lost+found mft record number */
@@ -2879,13 +2879,15 @@ static void ntfsck_check_lost_found(ntfs_volume *vol, ntfs_inode *ni)
 	if (lf_mftno == (u64)-1) {
 		/* create 'lost+found' directory */
 create_lf:
-		ucs_namelen = ntfs_mbstoucs(FILENAME_LOST_FOUND, &ucs_name);
-		if (ucs_namelen != -1) {
-			lf_ni = ntfs_create(ni, 0, ucs_name, ucs_namelen, S_IFDIR);
-			ntfs_log_info("%s(%"PRIu64") created\n", FILENAME_LOST_FOUND,
-					lf_ni->mft_no);
+		if (!NVolReadOnly(vol)) {
+			ucs_namelen = ntfs_mbstoucs(FILENAME_LOST_FOUND, &ucs_name);
+			if (ucs_namelen != -1) {
+				lf_ni = ntfs_create(ni, 0, ucs_name, ucs_namelen, S_IFDIR);
+				ntfs_log_info("%s(%"PRIu64") created\n", FILENAME_LOST_FOUND,
+						lf_ni->mft_no);
+			}
+			free(ucs_name);
 		}
-		free(ucs_name);
 	} else {
 		lf_ni = ntfs_inode_open(vol, lf_mftno);
 		ntfs_log_info("%s(%"PRIu64") was already created\n",
