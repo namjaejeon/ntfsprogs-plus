@@ -2913,8 +2913,6 @@ create_lf:
 	}
 
 	if (!lf_ni) {
-		ntfs_log_perror("Failed to convert '%s' to unicode",
-				FILENAME_LOST_FOUND);
 		ntfs_log_debug("Failed to open '%s' inode\n", FILENAME_LOST_FOUND);
 		/* do not return */
 	} else {
