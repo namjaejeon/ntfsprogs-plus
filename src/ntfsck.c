@@ -1385,7 +1385,7 @@ static int ntfsck_check_file_name_attr(ntfs_inode *ni, FILE_NAME_ATTR *ie_fn,
 	 * Is it need to check MFT/$FN's data size?
 	 * It looks like that Windows does not check MFT/$FN's data size.
 	 */
-	if (ni->data_size != ie_fn->data_size) {
+	if (ni->data_size != sle64_to_cpu(ie_fn->data_size)) {
 		check_failed("Data size is different "
 				"(IDX/$FN:%"PRIu64" MFT/$DATA:%"PRIu64") "
 				"on inode(%"PRIu64", %s). Fix it.",
