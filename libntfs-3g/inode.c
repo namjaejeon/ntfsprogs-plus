@@ -716,6 +716,10 @@ int ntfs_inode_attach_all_extents(ntfs_inode *ni)
 	errno = 0;
 	ale = (ATTR_LIST_ENTRY *)ni->attr_list;
 	while ((u8*)ale < ni->attr_list + ni->attr_list_size) {
+		/* to prevent infinite loop */
+		if (le16_to_cpu(ale->length) == 0)
+			return -1;
+
 		if (ni->mft_no != MREF_LE(ale->mft_reference) &&
 				prev_attached != MREF_LE(ale->mft_reference)) {
 			if (!ntfs_extent_inode_open(ni, ale->mft_reference)) {
@@ -724,10 +728,6 @@ int ntfs_inode_attach_all_extents(ntfs_inode *ni)
 			}
 			prev_attached = MREF_LE(ale->mft_reference);
 		}
-
-		/* to prevent infinite loop */
-		if (le16_to_cpu(ale->length) == 0)
-			return -1;
 
 		ale = (ATTR_LIST_ENTRY *)((u8*)ale + le16_to_cpu(ale->length));
 	}
