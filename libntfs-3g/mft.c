@@ -2065,6 +2065,11 @@ int ntfs_mft_record_free(ntfs_volume *vol, ntfs_inode *ni)
 		return -1;
 	}
 
+	if (ni->mft_no < FILE_first_user) {
+		errno = EINVAL;
+		return -1;
+	}
+
 	/* Cache the mft reference for later. */
 	mft_no = ni->mft_no;
 
