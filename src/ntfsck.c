@@ -2247,15 +2247,19 @@ static int ntfsck_check_file(ntfs_inode *ni)
 static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni)
 {
 	int ext_idx = 0;
+	ntfs_volume *vol;
 
-	if (!ni)
+	if (!ni || !ni->vol)
 		return STATUS_ERROR;
+
+	vol = ni->vol;
 
 	if (ntfsck_mft_bmp_bit_set(ni->mft_no)) {
 		ntfs_log_error("Failed to set MFT bitmap for (%"PRIu64")\n",
 				ni->mft_no);
 		/* do not return error */
 	}
+	ntfs_bitmap_set_bit(vol->mftbmp_na, ni->mft_no);
 
 	/* set mft record bitmap */
 	while (ext_idx < ni->nr_extents) {
@@ -2263,6 +2267,7 @@ static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni)
 			/* do not return error */
 			break;
 		}
+		ntfs_bitmap_set_bit(vol->mftbmp_na, ni->extent_nis[ext_idx]->mft_no);
 		ext_idx++;
 	}
 	return STATUS_OK;
