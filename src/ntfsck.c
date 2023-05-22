@@ -929,6 +929,23 @@ stack_of:
 
 		if (!ntfsck_mft_bmp_bit_get(MREF(parent_no))) {
 			if (check_mftrec_in_use(vol, MREF(parent_no), 1)) {
+				struct ntfs_list_head *pos;
+				struct orphan_mft *tof;
+
+				/*
+				 * Lookup parent in list to avoid infinite loop
+				 * issue by circular parent number.
+				 * TODO: change the linear lookup with hash table.
+				 */
+				ntfs_list_for_each(pos, &ntfs_orphan_list) {
+					tof = ntfs_list_entry(pos, struct orphan_mft, list);
+					if (tof->mft_no == MREF(parent_no)) {
+						ntfs_log_error("Found same parent number(%ld) in orphan list\n",
+								MREF(parent_no));
+						goto add_to_lostfound;
+					}
+				}
+
 				/*
 				 * Parent is also orphaned file!
 				 */
