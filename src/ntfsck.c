@@ -2776,6 +2776,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 					    le16_to_cpu(cni->mrec->sequence_number))))
 			ntfs_log_error("Failed to add index entry, errno : %d\n",
 					errno);
+		ntfs_inode_close(cni);
 	}
 
 	if (ictx->ia_na->data_size > ictx->block_size - 1)
@@ -2829,6 +2830,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 						le16_to_cpu(cni->mrec->sequence_number))))
 				ntfs_log_error("Failed to add index entry, errno : %d\n",
 						errno);
+			ntfs_inode_close(cni);
 		}
 		ia = (INDEX_ALLOCATION *)((u8 *)ia + ictx->block_size);
 	}
