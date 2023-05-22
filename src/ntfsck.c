@@ -2695,6 +2695,8 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	ir_buf = malloc(le32_to_cpu(ir->index.index_length));
 	if (!ir_buf) {
 		ntfs_log_error("Failed to allocate ir buffer\n");
+		ntfs_attr_close(ictx->ia_na);
+		ictx->ia_na = NULL;
 		return;
 	}
 
@@ -2835,6 +2837,8 @@ out:
 	ntfs_free(ir_buf);
 	if (ia_buf)
 		ntfs_free(ia_buf);
+	ntfs_attr_close(ictx->ia_na);
+	ictx->ia_na = NULL;
 }
 
 static int _ntfsck_remove_index(ntfs_inode *parent_ni, ntfs_inode *ni)
@@ -3067,9 +3071,8 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			/* read $IA */
-			if (!ictx->ia_na)
-				ictx->ia_na = ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
-						ictx->name, ictx->name_len);
+			ictx->ia_na = ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
+							ictx->name, ictx->name_len);
 			if (!ictx->ia_na) {
 				ntfs_log_perror("Failed to open index allocation of inode "
 						"%"PRIu64"", dir->ni->mft_no);
