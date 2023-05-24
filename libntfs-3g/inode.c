@@ -516,7 +516,8 @@ int ntfs_inode_close(ntfs_inode *ni)
 		/* do not cache system files : could lead to double entries */
 		if (ni->vol && ni->vol->nidata_cache &&
 				((ni->mft_no == FILE_root) ||
-				 (!utils_is_metadata(ni)))) {
+				 ((ni->mft_no >= FILE_root) &&
+				 !(ni->mrec->flags & MFT_RECORD_IS_4)))) {
 			/* If we have dirty metadata, write it out. */
 			dirty = NInoDirty(ni) || NInoAttrListDirty(ni);
 			if (dirty) {
@@ -1395,7 +1396,7 @@ void ntfs_inode_update_times(ntfs_inode *ni, ntfs_time_update_flags mask)
 		return;
 	}
 
-	if ((utils_is_metadata(ni) && ni->mft_no != FILE_root) ||
+	if ((ni->mft_no < FILE_first_user && ni->mft_no != FILE_root) ||
 			NVolReadOnly(ni->vol) || !mask)
 		return;
 
