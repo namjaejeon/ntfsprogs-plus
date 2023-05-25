@@ -1058,7 +1058,8 @@ stack_of:
 				ntfs_list_for_each(pos, &ntfs_orphan_list) {
 					tof = ntfs_list_entry(pos, struct orphan_mft, list);
 					if (tof->mft_no == MREF(parent_no)) {
-						ntfs_log_error("Found same parent number(%ld) in orphan list\n",
+						ntfs_log_error("Found same parent number(%"PRIu64
+								") in orphan list\n",
 								MREF(parent_no));
 						goto add_to_lostfound;
 					}
