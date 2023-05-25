@@ -1919,6 +1919,9 @@ static void ntfs_ir_leafify(ntfs_index_context *icx, INDEX_HEADER *ih)
 	
 	/* Not fatal error */
 	ntfs_ir_truncate(icx, le32_to_cpu(ih->index_length));
+
+	/* update icx->entry */
+	icx->entry = ie;
 }
 
 /**
