@@ -1721,6 +1721,12 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 		if (ntfs_attr_lookup(na->type, na->name, na->name_len, CASE_SENSITIVE,
 					next_vcn, NULL, 0, actx)) {
 			err = ENOENT;
+			if (errno == EIO) {
+				if (rl) free(rl);
+				na->rl = NULL;
+				*need_fix = TRUE;
+				goto out;
+			}
 			break;
 		}
 
@@ -1792,6 +1798,7 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 
 	na->rl = rl;
 
+out:
 	ntfs_attr_put_search_ctx(actx);
 	return rl;
 }
@@ -2094,7 +2101,7 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls
 
 	/* check cluster runlist and set bitmap */
 	if (ntfsck_decompose_setbit_runlist(na, &rls, &need_fix)) {
-		check_failed("Failed to get non-resident attribute(%d) "
+		ntfs_log_error("Failed to get non-resident attribute(%d) "
 				"in directory(%"PRId64")", na->type, ni->mft_no);
 		return STATUS_ERROR;
 	}
@@ -2305,6 +2312,8 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni)
 
 		ret = ntfsck_check_non_resident_attr(na, NULL);
 		ntfs_attr_close(na);
+		if (ret)
+			break;
 	}
 
 	ntfs_attr_put_search_ctx(ctx);
