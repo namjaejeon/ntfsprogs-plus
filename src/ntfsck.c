@@ -3595,13 +3595,13 @@ conflict_option:
 			break;
 		case 'C':	/* exclusive with others */
 			if (option.flags & (NTFS_MNT_FS_AUTO_REPAIR |
-							NTFS_MNT_FS_NO_REPAIR |
 							NTFS_MNT_FS_ASK_REPAIR |
 							NTFS_MNT_FS_YES_REPAIR)) {
 				goto conflict_option;
 			}
 
 			option.flags &= ~NTFS_MNT_FSCK;
+			option.flags |= NTFS_MNT_FS_NO_REPAIR;
 			check_dirty_only = TRUE;
 			break;
 		case 'n':
@@ -3694,8 +3694,14 @@ conflict_option:
 			exit(RETURN_OPERATIONAL_ERROR);
 		}
 
-		ntfs_log_error("ntfsck mount failed, errno : %d\n", errno);
-		fsck_err_found();
+		if (check_dirty_only == TRUE) {
+			ntfs_log_info("Check volume: Volume mount failed, Consider volume is dirty.\n");
+			exit(RETURN_FS_ERRORS_LEFT_UNCORRECTED);
+		} else {
+			ntfs_log_error("ntfsck mount failed, errno : %d\n", errno);
+			fsck_err_found();
+		}
+
 		goto err_out;
 	}
 
