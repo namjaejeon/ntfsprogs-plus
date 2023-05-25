@@ -2692,6 +2692,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	u32 ib_cnt = 1, i;
 	BOOL ib_corrupted = FALSE;
 	u8 *ir_buf, *ia_buf = NULL, *ibs, *index_end;
+	char *filename;
 
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
 			ictx->name, ictx->name_len);
@@ -2768,10 +2769,10 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 		ie_fn = &ie->key.file_name;
 		mref = le64_to_cpu(ie->indexed_file);
+		filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
 		ntfs_log_info("Inserting entry to index root, mref : %"PRIu64", %s\n",
-			      MREF(le64_to_cpu(ie->indexed_file)),
-			      ntfs_attr_name_get(ie_fn->file_name,
-			      ie_fn->file_name_length));
+			      MREF(le64_to_cpu(ie->indexed_file)), filename);
+		free(filename);
 
 		cni = ntfs_inode_open(vol, MREF(mref));
 		if (!cni)
