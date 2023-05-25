@@ -614,6 +614,12 @@ static void ntfsck_free_mft_records(ntfs_volume *vol, ntfs_inode *ni)
 	ntfs_inode *free_inode;
 	u64 free_mftno;
 
+	if (utils_is_metadata(ni) == 1) {
+		ntfs_log_info("Try to free system file(%"PRIu64")\n",
+				ni->mft_no);
+		return;
+	}
+
 	ntfs_inode_attach_all_extents(ni);
 	while (ni->nr_extents) {
 		free_inode = *(ni->extent_nis);

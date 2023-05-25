@@ -62,6 +62,7 @@
 #include "cache.h"
 #include "misc.h"
 #include "xattrs.h"
+#include "lib_utils.h"
 
 /*
  *	JPA NTFS constants or structs
@@ -1075,12 +1076,11 @@ static int upgrade_secur_desc(ntfs_volume *vol,
 
 		/*
 		 * upgrade requires NTFS format v3.x
-		 * also refuse upgrading for special files
-		 * whose number is less than FILE_first_user
+		 * also refuse upgrading for special files.
 		 */
 
 	if ((vol->major_ver >= 3)
-	    && (ni->mft_no >= FILE_first_user)) {
+	    && (!utils_is_metadata(ni))) {
 		attrsz = ntfs_attr_size(attr);
 		securid = setsecurityattr(vol,
 			(const SECURITY_DESCRIPTOR_RELATIVE*)attr,

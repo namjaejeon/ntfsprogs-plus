@@ -57,6 +57,7 @@
 #include "mft.h"
 #include "logging.h"
 #include "misc.h"
+#include "lib_utils.h"
 
 /**
  * ntfs_mft_records_read - read records from the mft from disk
@@ -2065,7 +2066,7 @@ int ntfs_mft_record_free(ntfs_volume *vol, ntfs_inode *ni)
 		return -1;
 	}
 
-	if (ni->mft_no < FILE_first_user) {
+	if (utils_is_metadata(ni) == 1) {
 		errno = EINVAL;
 		return -1;
 	}

@@ -55,6 +55,7 @@
 #include "logging.h"
 #include "misc.h"
 #include "xattrs.h"
+#include "lib_utils.h"
 
 ntfs_inode *ntfs_inode_base(ntfs_inode *ni)
 {
@@ -1395,7 +1396,7 @@ void ntfs_inode_update_times(ntfs_inode *ni, ntfs_time_update_flags mask)
 		return;
 	}
 
-	if ((utils_is_metadata(ni) && ni->mft_no != FILE_root) ||
+	if ((utils_is_metadata(ni) == 1 && ni->mft_no != FILE_root) ||
 			NVolReadOnly(ni->vol) || !mask)
 		return;
 
