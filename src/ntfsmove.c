@@ -478,7 +478,7 @@ static int dont_move(ntfs_inode *ino)
 	ATTR_RECORD *rec;
 	FILE_NAME_ATTR *name;
 
-	if (utils_is_metadata(ino)) {
+	if (utils_is_metadata(ino) == 1) {
 		ntfs_log_error("metadata\n");
 		return 1;
 	}
