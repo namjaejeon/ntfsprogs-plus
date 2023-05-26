@@ -925,10 +925,63 @@ static int ntfsck_cmp_parent_mft_sequence(ntfs_inode *parent_ni, FILE_NAME_ATTR 
 
 	mft_pdir_seq = MSEQNO_LE(fn->parent_directory);
 	pdir_seq = le16_to_cpu(parent_ni->mrec->sequence_number);
-	if (mft_pdir_seq != pdir_seq)
+	if (mft_pdir_seq > pdir_seq)
+		return 1;
+	else if (mft_pdir_seq < pdir_seq)
+		return -1;
+
+	return 0;
+}
+
+static int ntfsck_cmp_parent_mft_number(ntfs_inode *parent_ni, FILE_NAME_ATTR *fn)
+{
+	u64 parent_mftno;	/* IDX/$FN's parent MFT no */
+	u64 mft_pdir;		/* MFT/$FN's parent MFT no */
+
+	parent_mftno = parent_ni->mft_no;
+	mft_pdir = MREF_LE(fn->parent_directory);
+
+	if (mft_pdir != parent_mftno)
 		return 1;
 
 	return 0;
+}
+
+static int ntfsck_cmp_parent_mft_record(ntfs_inode *parent_ni, ntfs_inode *ni)
+{
+	FILE_NAME_ATTR *fn;
+	ntfs_attr_search_ctx *ctx;
+	int ret = STATUS_ERROR;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+
+	ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
+			0, NULL, 0, ctx);
+	if (ret) {
+		ntfs_log_error("Failed to lookup $FILE_NAME(%"PRIu64")\n",
+				ni->mft_no);
+		ntfs_attr_put_search_ctx(ctx);
+		return STATUS_ERROR;
+	}
+
+	/* We know this will always be resident. */
+	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
+			le16_to_cpu(ctx->attr->value_offset));
+
+	if (ntfsck_cmp_parent_mft_number(parent_ni, fn)) {
+		ntfs_attr_put_search_ctx(ctx);
+		return STATUS_ERROR;
+	}
+
+	if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
+		ntfs_attr_put_search_ctx(ctx);
+		return STATUS_ERROR;
+	}
+
+	ntfs_attr_put_search_ctx(ctx);
+	return STATUS_OK;
 }
 
 static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, s64 mft_no)
@@ -1580,7 +1633,7 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		if (ntfs_attr_exist(ni, AT_INDEX_ROOT, NTFS_INDEX_I30, 4)) {
 			if (!(ie_flags & FILE_ATTR_I30_INDEX_PRESENT)) {
 				check_failed("MFT(%"PRIu64") flag is set to directory, "
-						"but Index/$FILE_NAME is not set.",
+						"but IDX/$FN is not set.",
 						ni->mft_no);
 				ie_flags |= FILE_ATTR_I30_INDEX_PRESENT;
 				ie_fn->file_attributes |= FILE_ATTR_I30_INDEX_PRESENT;
@@ -1628,7 +1681,7 @@ static int32_t ntfsck_check_file_type(ntfs_inode *ni, ntfs_index_context *ictx,
 		if (ntfs_attr_exist(ni, AT_DATA, AT_UNNAMED, 0)) {
 			if (ie_flags & FILE_ATTR_I30_INDEX_PRESENT) {
 				check_failed("MFT(%"PRIu64") flag is set to file, "
-						"but MFT/$IR is set to directory.",
+						"but IDX/$FN is set to directory.",
 						ni->mft_no);
 				ie_flags &= ~FILE_ATTR_I30_INDEX_PRESENT;
 				ie_fn->file_attributes &= ~FILE_ATTR_I30_INDEX_PRESENT;
@@ -2594,8 +2647,13 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
+		if (ntfsck_cmp_parent_mft_record(ictx->ni, ni)) {
+			ntfs_inode_close(ni);
+			goto remove_index;
+		}
+
 		/* skip checking for system files */
-		if (!utils_is_metadata(ni) && !utils_is_metadata(ictx->ni)) {
+		if (!utils_is_metadata(ni)) {
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret) {
 				ntfs_log_info("Failed to check inode(%"PRIu64") "
@@ -2613,7 +2671,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			ret = ntfsck_check_system_inode(ni, ie, ictx);
 		}
 
-		if ((ie->key.file_name.file_attributes & FILE_ATTR_I30_INDEX_PRESENT) &&
+		if ((ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT) &&
 				strcmp(filename, ".")) {
 			dir = (struct dir *)calloc(1, sizeof(struct dir));
 			if (!dir) {
