@@ -449,7 +449,10 @@ static int ntfsck_set_lcnbmp_range(s64 lcn, s64 length, u8 bit)
 				 * because this bitmap buffer should be filled as
 				 * the same value.
 				 */
-				memset(fsck_lcn_bitmap[bm_i], 0xFF, NTFS_BUF_SIZE);
+				if (bit == 0)
+					memset(fsck_lcn_bitmap[bm_i], 0, NTFS_BUF_SIZE);
+				else
+					memset(fsck_lcn_bitmap[bm_i], 0xFF, NTFS_BUF_SIZE);
 				length -= NTFSCK_BM_BITS_SIZE;
 			}
 		}
