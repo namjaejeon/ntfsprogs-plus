@@ -881,6 +881,56 @@ err_out:
 	return ret;
 }
 
+/* delete orphaned mft, call this when inode open failed. */
+static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
+{
+	/* Do not delete system file */
+	if (mft_no < FILE_first_user)
+		return;
+
+	ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_no);
+	ntfsck_mft_bmp_bit_clear(mft_no);
+}
+
+static void ntfsck_delete_orphaned_inode(ntfs_inode **ni)
+{
+	ntfs_volume *vol;
+
+	if (!*ni) {
+		ntfs_log_error("Can't delete orphaned inode: ni is NULL\n");
+		return;
+	}
+
+	vol = (*ni)->vol;
+
+	/* Do not delete system file */
+	if (utils_is_metadata(*ni) == 1) {
+		ntfs_inode_close(*ni);
+		return;
+	}
+
+	ntfsck_check_non_resident_cluster(*ni, 0);
+	ntfsck_free_mft_records(vol, *ni);
+
+	*ni = NULL;
+}
+
+/*
+ * compare parent mft sequence number and sequence number of inode's $FN
+ */
+static int ntfsck_cmp_parent_mft_sequence(ntfs_inode *parent_ni, FILE_NAME_ATTR *fn)
+{
+	u16 mft_pdir_seq;	/* MFT/$FN's parent MFT sequence no */
+	u16 pdir_seq;		/* parent's MFT sequence no */
+
+	mft_pdir_seq = MSEQNO_LE(fn->parent_directory);
+	pdir_seq = le16_to_cpu(parent_ni->mrec->sequence_number);
+	if (mft_pdir_seq != pdir_seq)
+		return 1;
+
+	return 0;
+}
+
 static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, s64 mft_no)
 {
 	ntfs_attr_search_ctx *ctx;
@@ -908,13 +958,17 @@ stack_of:
 		of = ntfs_list_entry(ntfs_orphan_list.next, struct orphan_mft, list);
 
 		ni = ntfs_inode_open(vol, of->mft_no);
-		if (!ni)
-			goto delete_inode;
+		if (!ni) {
+			ntfsck_delete_orphaned_mft(vol, of->mft_no);
+			goto next_inode;
+		}
 
 		ctx = ntfs_attr_get_search_ctx(ni, NULL);
 		if (!ctx) {
 			ntfs_log_error("Failed to allocate attribute context\n");
-			goto delete_inode;
+			ntfsck_delete_orphaned_inode(&ni);
+			ret = STATUS_OK;
+			goto next_inode;
 		}
 
 		ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
@@ -923,7 +977,9 @@ stack_of:
 			/* $FILE_NAME lookup failed */
 			ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%"PRIu64")\n",
 					ni->mft_no);
-			goto delete_inode;
+			ntfsck_delete_orphaned_inode(&ni);
+			ret = STATUS_OK;
+			goto next_inode;
 		}
 
 		/* We know this will always be resident. */
@@ -972,16 +1028,7 @@ stack_of:
 			 */
 			ntfs_log_verbose("!! FOUND Deleted parent inode(%"PRIu64"), "
 					"inode(%"PRIu64")\n", MREF(parent_no), ni->mft_no);
-
-add_to_lostfound:
-			ret = ntfsck_add_inode_to_lostfound(ni, fn, ctx);
-			if (ret) {
-				ntfs_log_error("Failed to add inode(%"PRIu64") to %s\n",
-						ni->mft_no, FILENAME_LOST_FOUND);
-				goto delete_inode;
-			}
-
-			goto next_inode;
+			goto add_to_lostfound;
 		}
 
 		/*
@@ -992,6 +1039,12 @@ add_to_lostfound:
 			parent_ni = ntfs_inode_open(vol, MREF(parent_no));
 
 		if (parent_ni) {
+			if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
+				/* do not add inode to parent */
+				ntfs_log_info("##### Different seqnence number\n");
+				goto add_to_lostfound;
+			}
+
 			/* Check parent inode */
 			if (ntfsck_check_directory(parent_ni)) {
 				ntfs_log_error("Failed to check parent directory(%"PRIu64":%"PRIu64") "
@@ -1037,24 +1090,18 @@ next_inode:
 
 	return ret;
 
-delete_inode:
-	/* Do not delete system file */
-	if (ni && utils_is_metadata(ni) == 1) {
-		ntfs_inode_close(ni);
-		goto next_inode;
-	} else if (of->mft_no < FILE_first_user)
-		goto next_inode;
-
-	if (ni) {
-		ntfsck_check_non_resident_cluster(ni, 0);
-		ntfsck_free_mft_records(vol, ni);
-		ni = NULL;
-	} else {
-		ntfs_bitmap_clear_bit(vol->mftbmp_na, of->mft_no);
-		ntfsck_mft_bmp_bit_clear(of->mft_no);
+	/*
+	 * Try to add orphaned inode to lostfound,
+	 * if failed, delete inode
+	 */
+add_to_lostfound:
+	ret = ntfsck_add_inode_to_lostfound(ni, fn, ctx);
+	if (ret) {
+		ntfs_log_error("Failed to add inode(%"PRIu64") to %s\n",
+				ni->mft_no, FILENAME_LOST_FOUND);
+		ntfsck_delete_orphaned_inode(&ni);
+		ret = STATUS_OK;
 	}
-
-	ret = 0;
 	goto next_inode;
 }
 
