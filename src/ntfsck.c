@@ -2941,10 +2941,11 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 			ie_fn = &ie->key.file_name;
 			mref = le64_to_cpu(ie->indexed_file);
+			filename = ntfs_attr_name_get(ie_fn->file_name,
+					ie_fn->file_name_length);
 			ntfs_log_info("Inserting entry to $IA, mref : %"PRIu64", %s\n",
-				      MREF(le64_to_cpu(ie->indexed_file)),
-				      ntfs_attr_name_get(ie_fn->file_name,
-				      ie_fn->file_name_length));
+				      MREF(le64_to_cpu(ie->indexed_file)), filename);
+			free(filename);
 
 			cni = ntfs_inode_open(vol, MREF(mref));
 			if (!cni)
