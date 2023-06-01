@@ -176,8 +176,22 @@ static ntfs_inode *ntfs_inode_real_open(ntfs_volume *vol, const MFT_REF mref)
 		goto err_out;
 
 	if (!(ni->mrec->flags & MFT_RECORD_IN_USE)) {
-		errno = ENOENT;
-		goto err_out;
+		ni->mft_no = MREF(mref);
+		/*
+		 * If system file is marked as removed(MFT_RECORD_IN_USED unset),
+		 * set it
+		 */
+		if ((utils_is_metadata(ni) == 1) && NVolFsck(vol)) {
+			check_failed("System file(%"PRIu64") is marked unused, Fix it",
+					ni->mft_no);
+			if (ntfsck_ask_repair(vol)) {
+				ni->mrec->flags |= MFT_RECORD_IN_USE;
+				ntfs_inode_mark_dirty(ni);
+			}
+		} else {
+			errno = ENOENT;
+			goto err_out;
+		}
 	}
 	ni->mft_no = MREF(mref);
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
