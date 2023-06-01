@@ -1095,7 +1095,9 @@ stack_of:
 		if (parent_ni) {
 			if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
 				/* do not add inode to parent */
-				ntfs_log_info("##### Different seqnence number\n");
+				ntfs_log_info("Different seqnence number of parent(%"PRIu64
+						") and inode(%"PRIu64")\n",
+						parent_ni->mft_no, ni->mft_no);
 				goto add_to_lostfound;
 			}
 
@@ -2841,7 +2843,8 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		if (ntfs_attr_mst_pread(ictx->ia_na,
 					ntfs_ib_vcn_to_pos(ictx, vcn), 1,
 					ictx->block_size, ibs) != 1) {
-			ntfs_log_error("Failed to read index blocks, %d\n", errno);
+			ntfs_log_perror("Failed to read index blocks of inode(%"PRIu64"), %d",
+					ictx->ni->mft_no, errno);
 			ib_corrupted = TRUE;
 			goto out;
 		}
