@@ -3551,6 +3551,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 	s64 mft_num;
 	int ret = STATUS_ERROR;
 	int is_used;
+	int go_through = 0;
 
 	fsck_start_step("Check system files...\n");
 
@@ -3579,6 +3580,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 
 		sys_ni = ntfsck_get_opened_ni_vol(vol, mft_num);
 		if (!sys_ni) {
+			go_through = 1;
 			if (mft_num == FILE_root)
 				sys_ni = root_ni;
 			else {
@@ -3655,6 +3657,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 		if (ntfsck_opened_ni_vol(mft_num) == TRUE)
 			continue;
 		ntfs_inode_close(sys_ni);
+		go_through = 0;
 	}
 
 put_index_ctx:
@@ -3666,6 +3669,8 @@ close_inode:
 
 	fsck_end_step();
 
+	if (go_through)
+		ret = STATUS_OK;
 	return ret;
 }
 
