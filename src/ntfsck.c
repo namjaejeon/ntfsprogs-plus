@@ -2654,7 +2654,15 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 
 		/* skip checking for system files */
-		if (!utils_is_metadata(ni)) {
+		if ((utils_is_metadata(ni) == 1) ||
+				((utils_is_metadata(ictx->ni) == 1) &&
+				 (ictx->ni->mft_no != FILE_root))) {
+			/*
+			 * Do not check return value because system files can be deleted.
+			 * this check may be already done in check system files.
+			 */
+			ret = ntfsck_check_system_inode(ni, ie, ictx);
+		} else {
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret) {
 				ntfs_log_info("Failed to check inode(%"PRIu64") "
@@ -2664,12 +2672,6 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 				ntfs_inode_close(ni);
 				goto remove_index;
 			}
-		} else {
-			/*
-			 * Do not check return value because system files can be deleted.
-			 * this check may be already done in check system files.
-			 */
-			ret = ntfsck_check_system_inode(ni, ie, ictx);
 		}
 
 		if ((ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT) &&
