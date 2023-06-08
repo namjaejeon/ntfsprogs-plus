@@ -3065,8 +3065,9 @@ create_lf:
 		}
 	} else {
 		lf_ni = ntfs_inode_open(vol, lf_mftno);
-		ntfs_log_verbose("%s(%"PRIu64") was already created\n",
-				FILENAME_LOST_FOUND, lf_ni->mft_no);
+		if (!lf_ni)
+			ntfs_log_verbose("Failed to open %s(%"PRIu64").\n",
+					FILENAME_LOST_FOUND, lf_mftno);
 
 		if (lf_ni && !(lf_ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
 			int ret = STATUS_OK;
@@ -3088,7 +3089,8 @@ create_lf:
 	}
 
 	if (!lf_ni) {
-		ntfs_log_error("Failed to open/check '%s'\n", FILENAME_LOST_FOUND);
+		if (!NVolReadOnly(vol))
+			ntfs_log_error("Failed to open/check '%s'\n", FILENAME_LOST_FOUND);
 	} else {
 		vol->lost_found = lf_ni->mft_no;
 		ntfs_inode_close(lf_ni);
