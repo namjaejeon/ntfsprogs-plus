@@ -28,7 +28,7 @@ else
 fi
 
 for TESTCASE_DIR in $TESTCASE_DIRS; do
-	if [ ! -e "${TESTCASE_DIR}/${IMAGE_FILE}.tar.xz" ]; then
+	if [ ! -e "${TESTCASE_DIR}/${IMAGE_FILE}.tar.gz" ]; then
 		TEST_COUNT=$((TEST_COUNT - 1))
 		continue
 	fi
@@ -37,7 +37,7 @@ for TESTCASE_DIR in $TESTCASE_DIRS; do
 	echo "-----------------------------------"
 
 	# Set up image file as loop device
-	tar -C . -xf "${TESTCASE_DIR}/${IMAGE_FILE}.tar.xz"
+	tar --checkpoint=1000 -C . -xf "${TESTCASE_DIR}/${IMAGE_FILE}.tar.gz"
 	if [ $NEED_LOOPDEV ]; then
 		DEV_FILE=$(losetup -f "${IMAGE_FILE}" --show)
 	else
