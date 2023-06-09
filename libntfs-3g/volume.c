@@ -698,6 +698,9 @@ static BOOL ntfsck_verify_boot_sector(ntfs_volume *vol)
 			ntfs_free(ntfs_boot);
 			return 1;
 		}
+	} else {
+		ntfs_log_error("Boot sector: invalid boot sector\n");
+		return 1;
 	}
 
 out:
