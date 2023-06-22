@@ -1162,6 +1162,43 @@ add_to_lostfound:
 	goto next_inode;
 }
 
+MFT_RECORD *mrec_unused_chk;
+static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
+{
+	MFT_RECORD *mrec;
+	u16 seq_no;
+	s64 pos = mft_num * vol->mft_record_size;
+	s64 count = 512;
+
+	if (ntfs_attr_pread(vol->mft_na, pos, count, mrec_unused_chk) != count) {
+		ntfs_log_perror("Couldn't read $MFT record %lld",
+				(long long)mft_num);
+		return;
+	}
+
+	if (!ntfs_is_file_record(mrec_unused_chk->magic) ||
+	    !(mrec_unused_chk->flags & MFT_RECORD_IN_USE)) {
+		ntfs_log_verbose("Record(%"PRId64") unused. Skipping.\n",
+				mft_num);
+		return;
+	}
+
+	ntfs_log_error("Record(%"PRId64") used. "
+		       "Mark the mft record as not in use.\n",
+		       mft_num);
+	mrec_unused_chk->flags &= ~MFT_RECORD_IN_USE;
+	seq_no = le16_to_cpu(mrec_unused_chk->sequence_number);
+	if (seq_no == 0xffff)
+		seq_no = 1;
+	else if (seq_no)
+		seq_no++;
+	mrec_unused_chk->sequence_number = cpu_to_le16(seq_no);
+	if (ntfs_attr_pwrite(vol->mft_na, pos, count, mrec_unused_chk) != count) {
+		ntfs_log_error("Failed to write mft record(%"PRId64")\n",
+				mft_num);
+	}
+}
+
 s64 clear_mft_cnt;
 static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 {
@@ -1181,7 +1218,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 			return;
 		}
 
-		ntfs_log_verbose("Record(%"PRId64") unused. Skipping.\n", mft_num);
+		ntfsck_check_mft_record_unused(vol, mft_num);
 		return;
 	}
 
@@ -3337,6 +3374,12 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 {
 	s64 mft_num, nr_mft_records;
 
+	mrec_unused_chk = ntfs_malloc(512);
+	if (!mrec_unused_chk) {
+		ntfs_log_perror("Couldn't allocate mrec_unused_chk buffer");
+		return;
+	}
+
 	fsck_start_step("Check mft entries in volume...\n");
 
 	// For each mft record, verify that it contains a valid file record.
@@ -3357,6 +3400,8 @@ static void ntfsck_check_mft_records(ntfs_volume *vol)
 	ntfsck_update_lcn_bitmap(vol->mft_ni);
 
 	fsck_end_step();
+
+	free(mrec_unused_chk);
 }
 
 static int ntfsck_reset_dirty(ntfs_volume *vol)
