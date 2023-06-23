@@ -943,12 +943,12 @@ static int ntfsck_cmp_parent_mft_number(ntfs_inode *parent_ni, FILE_NAME_ATTR *f
 	mft_pdir = MREF_LE(fn->parent_directory);
 
 	if (mft_pdir != parent_mftno)
-		return 1;
+		return STATUS_ERROR;
 
-	return 0;
+	return STATUS_OK;
 }
 
-static int ntfsck_cmp_parent_mft_record(ntfs_inode *parent_ni, ntfs_inode *ni)
+static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni, ntfs_inode *ni)
 {
 	FILE_NAME_ATTR *fn;
 	ntfs_attr_search_ctx *ctx;
@@ -972,16 +972,63 @@ static int ntfsck_cmp_parent_mft_record(ntfs_inode *parent_ni, ntfs_inode *ni)
 			le16_to_cpu(ctx->attr->value_offset));
 
 	if (ntfsck_cmp_parent_mft_number(parent_ni, fn)) {
+		ntfs_log_error("MFT number of parent(%"PRIu64")"
+				"and $FN of inode(%"PRIu64") is not same\n",
+				parent_ni->mft_no, MREF_LE(fn->parent_directory));
 		ntfs_attr_put_search_ctx(ctx);
 		return STATUS_ERROR;
 	}
 
 	if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
+		ntfs_log_error("Seuqnece number of parent(%"PRIu64")"
+				"and parent directory in $FN of inode(%"PRIu64") is not same\n",
+				parent_ni->mft_no, MREF_LE(fn->parent_directory));
 		ntfs_attr_put_search_ctx(ctx);
 		return STATUS_ERROR;
 	}
 
 	ntfs_attr_put_search_ctx(ctx);
+	return STATUS_OK;
+}
+
+/*
+ * check indexed_file of index entry and mft number and sequence of inode
+ * and also check parent mft number and sequence in $FN
+ */
+static int ntfsck_check_inode_fields(ntfs_inode *parent_ni,
+		ntfs_inode *ni, INDEX_ENTRY *ie)
+{
+	u16 ni_seq;		/* ni's MFT sequence no */
+	u16 idx_seq;		/* index entry's MFT sequence no */
+
+	if (!ni || !parent_ni || !ie)
+		return STATUS_ERROR;
+
+	if (le16_to_cpu(ni->mrec->link_count) == 0) {
+		ntfs_log_error("Link count of inode(%"PRIu64") is zero\n",
+				ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	if (MREF_LE(ni->mrec->base_mft_record) != 0) {
+		ntfs_log_error("Inode(%"PRIu64") is not base inode\n",
+				ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	/* check indexed_file of index entry and inode mft record and sequence */
+	idx_seq = MSEQNO_LE(ie->indexed_file);
+	ni_seq = le16_to_cpu(ni->mrec->sequence_number);
+	if (ni_seq != idx_seq) {
+		ntfs_log_error("Mismatch sequence number of index and inode(%"PRIu64")\n",
+				ni->mft_no);
+		return STATUS_ERROR;
+	}
+
+	/* check parent mft record of $FN and parent mft record and sequence */
+	if (ntfsck_check_parent_mft_record(parent_ni, ni))
+		return STATUS_ERROR;
+
 	return STATUS_OK;
 }
 
@@ -1165,7 +1212,6 @@ add_to_lostfound:
 MFT_RECORD *mrec_unused_chk;
 static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 {
-	MFT_RECORD *mrec;
 	u16 seq_no;
 	s64 pos = mft_num * vol->mft_record_size;
 	s64 count = 512;
@@ -2274,16 +2320,19 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls
 	 * that is also including compressed_size and flags.
 	 */
 
-	if (na->type == AT_DATA && need_fix == FALSE &&
-			!(ni->flags & FILE_ATTR_SYSTEM)) {
-		/* check flag & length for $DATA */
+	if (na->type == AT_DATA) {
+		if (need_fix == FALSE && !(ni->flags & FILE_ATTR_SYSTEM)) {
+			/* check flag & length for $DATA */
 
-		actx = ntfs_attr_get_search_ctx(ni, NULL);
-		if (!actx)
-			return STATUS_ERROR;
+			actx = ntfs_attr_get_search_ctx(ni, NULL);
+			if (!actx)
+				return STATUS_ERROR;
 
-		_ntfsck_check_data_attr(na, actx, &rls);
-		ntfs_attr_put_search_ctx(actx);
+			_ntfsck_check_data_attr(na, actx, &rls);
+			ntfs_attr_put_search_ctx(actx);
+		}
+	} else {
+		/* check size field */
 	}
 
 	if (out_rls)
@@ -2586,6 +2635,9 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	int32_t flags;
 	int ret;
 
+	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
+		goto err_out;
+
 	if (ni->attr_list) {
 		if (ntfsck_check_attr_list(ni))
 			goto err_out;
@@ -2628,6 +2680,9 @@ static int ntfsck_check_system_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx)
 {
 	int ret;
+
+	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
+		goto err_out;
 
 	if (ni->attr_list) {
 		ntfsck_check_attr_list(ni);
@@ -2695,7 +2750,14 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
-		if (ntfsck_cmp_parent_mft_record(ictx->ni, ni)) {
+		/*
+		 * check base_mft_record before calling utils_is_metadata().
+		 * cause utils_is_metadata() consider extent inode,
+		 * if base_mft_record is not zero
+		 */
+		if (MREF_LE(ni->mrec->base_mft_record) != 0) {
+			ntfs_log_error("Inode(%"PRIu64") is not base inode\n",
+					ni->mft_no);
 			ntfs_inode_close(ni);
 			goto remove_index;
 		}
