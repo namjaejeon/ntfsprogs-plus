@@ -217,6 +217,9 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		ntfs_index_context *ictx);
 static int ntfsck_initialize_index_attr(ntfs_inode *ni);
 static u8 *ntfsck_get_lcnbmp(s64 pos);
+static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
+static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni);
+static int ntfsck_check_attr_list(ntfs_inode *ni);
 
 char ntfsck_mft_bmp_bit_get(const u64 bit)
 {
@@ -767,6 +770,19 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 		return STATUS_ERROR;
 	}
 
+	/*
+	 * ntfs_index_add_filename() may allocate mft record internally.
+	 * So, check all mft record related with parent inode,
+	 * and set mft bitmap of ntfsck.
+	 */
+	if (parent_ni->attr_list) {
+		if (ntfsck_check_attr_list(parent_ni))
+			return STATUS_ERROR;
+
+		ntfs_inode_attach_all_extents(parent_ni);
+	}
+	ntfsck_set_mft_record_bitmap(parent_ni);
+
 	/* check again after adding $FN to index */
 	ret = ntfsck_find_and_check_index(parent_ni, ni, fn, TRUE);
 	if (ret != STATUS_OK) {
@@ -882,6 +898,7 @@ err_out:
 	return ret;
 }
 
+MFT_RECORD *mrec_unused_chk;
 /* delete orphaned mft, call this when inode open failed. */
 static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
 {
@@ -889,6 +906,15 @@ static void ntfsck_delete_orphaned_mft(ntfs_volume *vol, u64 mft_no)
 	if (mft_no < FILE_first_user)
 		return;
 
+	/*
+	 * should be called this function only in
+	 * ntfsck_check_mft_record_unused().
+	 * So, if mrec_unused_chk memory is NULL, return.
+	 */
+	if (!mrec_unused_chk)
+		return;
+
+	ntfsck_check_mft_record_unused(vol, mft_no);
 	ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_no);
 	ntfsck_mft_bmp_bit_clear(mft_no);
 }
@@ -1209,7 +1235,6 @@ add_to_lostfound:
 	goto next_inode;
 }
 
-MFT_RECORD *mrec_unused_chk;
 static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num)
 {
 	u16 seq_no;
@@ -1265,6 +1290,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 		}
 
 		ntfsck_check_mft_record_unused(vol, mft_num);
+		ntfsck_mft_bmp_bit_clear(mft_num);
 		return;
 	}
 
@@ -1284,7 +1310,7 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 	if (!ni) {
 		fsck_err_found();
 		ntfs_log_trace("Clear the bit of mft no(%"PRId64") "
-				"in the $MFT/$BITMAP corresponding orphaned MFT record",
+				"in the $MFT/$BITMAP corresponding orphaned MFT record\n",
 				mft_num);
 		if (_ntfsck_ask_repair(vol, FALSE)) {
 			if (ntfs_bitmap_clear_bit(vol->mftbmp_na, mft_num)) {
@@ -1292,6 +1318,8 @@ static void ntfsck_verify_mft_record(ntfs_volume *vol, s64 mft_num)
 						errno);
 				return;
 			}
+			ntfsck_check_mft_record_unused(vol, mft_num);
+			ntfsck_mft_bmp_bit_clear(mft_num);
 			clear_mft_cnt++;
 			fsck_err_fixed();
 		}
@@ -3213,6 +3241,7 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 		if (ntfs_inode_attach_all_extents(ni))
 			goto err_out;
 	}
+
 	ntfsck_check_inode_non_resident(ni);
 
 	if (ntfsck_check_directory(ni)) {
