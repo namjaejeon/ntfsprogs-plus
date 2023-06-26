@@ -2576,7 +2576,7 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni)
 	if (!ctx)
 		return STATUS_ERROR;
 
-	while (!ntfs_attrs_walk(ctx)) {
+	while (!(ret = ntfs_attrs_walk(ctx))) {
 		a = ctx->attr;
 		if (!a->non_resident)
 			continue;
@@ -2596,6 +2596,9 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni)
 		if (ret)
 			break;
 	}
+
+	if (ret == -1 && errno == ENOENT)
+		ret = STATUS_OK;
 
 	ntfs_attr_put_search_ctx(ctx);
 	return ret;
@@ -3295,10 +3298,13 @@ static ntfs_inode *ntfsck_check_root_inode(ntfs_volume *vol)
 			goto err_out;
 	}
 
-	ntfsck_check_inode_non_resident(ni);
+	if (ntfsck_check_inode_non_resident(ni)) {
+		ntfs_log_error("Failed to check non resident attribute of root directory.\n");
+		exit(STATUS_ERROR);
+	}
 
 	if (ntfsck_check_directory(ni)) {
-		ntfs_log_error("Root directory has corrupted.\n");
+		ntfs_log_error("Failed to check root directory.\n");
 		exit(STATUS_ERROR);
 	}
 
