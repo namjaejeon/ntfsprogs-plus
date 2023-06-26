@@ -2468,13 +2468,66 @@ init_all:
 
 static int ntfsck_check_file(ntfs_inode *ni)
 {
-	/*
-	 * nothing to do here, because size & flags checking in
-	 * ntfsck_check_non_resident_attr().
-	 */
+	ntfs_attr_search_ctx *ctx;
+	ntfs_volume *vol;
+	ATTR_RECORD *a;
+	FILE_ATTR_FLAGS attr_flags = 0;
 
-	/* TODO: add more checking routine for file */
+	if (!ni)
+		return STATUS_ERROR;
+
+	vol = ni->vol;
+
+	ctx = ntfs_attr_get_search_ctx(ni, NULL);
+	if (!ctx)
+		return STATUS_ERROR;
+
+	if (ntfs_attr_lookup(AT_DATA, NULL, 0, CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+		ntfs_log_error("$DATA attribute of Inode(%"PRIu64") is missing\n",
+				ni->mft_no);
+		goto err_out;
+	}
+
+	a = ctx->attr;
+	if (a->flags & (ATTR_COMPRESSION_MASK | ATTR_IS_SPARSE)) {
+		if (a->flags & ATTR_COMPRESSION_MASK) {
+			attr_flags = FILE_ATTR_COMPRESSED;
+			if (vol->cluster_size > 4096) {
+				ntfs_log_error("Found compressed data(%"PRIu64" but "
+						"compression is disabled due to "
+						"cluster size(%i) > 4kiB.\n",
+						ni->mft_no, vol->cluster_size);
+				goto err_out;
+			}
+
+			if ((a->flags & ATTR_COMPRESSION_MASK) != ATTR_IS_COMPRESSED) {
+				ntfs_log_error("Found unknown compression method "
+						"or corrupt file.(%"PRIu64")\n",
+						ni->mft_no);
+				goto err_out;
+			}
+		}
+		if (a->flags & ATTR_IS_SPARSE)
+			attr_flags |= FILE_ATTR_SPARSE_FILE;
+	}
+
+	if (a->flags & ATTR_IS_ENCRYPTED) {
+		if (attr_flags & FILE_ATTR_COMPRESSED) {
+			ntfs_log_error("Found encrypted and compressed data.(%"PRIu64")\n",
+					ni->mft_no);
+			goto err_out;
+		}
+		attr_flags |= FILE_ATTR_ENCRYPTED;
+	}
+
+	ntfs_attr_put_search_ctx(ctx);
 	return STATUS_OK;
+
+err_out:
+	if (ctx)
+		ntfs_attr_put_search_ctx(ctx);
+
+	return STATUS_ERROR;
 }
 
 /* called after ntfs_inode_attatch_all_extents() is called */
