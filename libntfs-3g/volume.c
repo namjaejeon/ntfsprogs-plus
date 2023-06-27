@@ -1305,6 +1305,9 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 		if (!ntfs_mft_record_check(vol, FILE_MFT + i, mrec))
 			use_mft = TRUE;
 
+		if (memcmp(mrec, mrec2, vol->mft_record_size))
+			use_mft = FALSE;
+
 		if (use_mirr == TRUE && use_mft == TRUE)
 			continue;
 
