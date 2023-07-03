@@ -2350,7 +2350,8 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls
 	 */
 
 	if (na->type == AT_DATA) {
-		if (need_fix == FALSE && !(ni->flags & FILE_ATTR_SYSTEM)) {
+		if (need_fix == FALSE && !(ni->flags & FILE_ATTR_SYSTEM) &&
+				!(ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
 			/* check flag & length for $DATA */
 
 			actx = ntfs_attr_get_search_ctx(ni, NULL);
