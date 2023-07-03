@@ -779,7 +779,8 @@ static int ntfsck_add_inode_to_parent(ntfs_volume *vol, ntfs_inode *parent_ni,
 		if (ntfsck_check_attr_list(parent_ni))
 			return STATUS_ERROR;
 
-		ntfs_inode_attach_all_extents(parent_ni);
+		if (ntfs_inode_attach_all_extents(parent_ni))
+			return STATUS_ERROR;
 	}
 	ntfsck_set_mft_record_bitmap(parent_ni);
 
@@ -1161,7 +1162,7 @@ stack_of:
 		if (parent_ni) {
 			if (ntfsck_cmp_parent_mft_sequence(parent_ni, fn)) {
 				/* do not add inode to parent */
-				ntfs_log_info("Different seqnence number of parent(%"PRIu64
+				ntfs_log_info("Different sequence number of parent(%"PRIu64
 						") and inode(%"PRIu64")\n",
 						parent_ni->mft_no, ni->mft_no);
 				goto add_to_lostfound;
@@ -2728,7 +2729,8 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		if (ntfsck_check_attr_list(ni))
 			goto err_out;
 
-		ntfs_inode_attach_all_extents(ni);
+		if (ntfs_inode_attach_all_extents(ni))
+			goto err_out;
 	}
 
 	ret = ntfsck_check_inode_non_resident(ni);
@@ -2860,7 +2862,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		} else {
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret) {
-				ntfs_log_info("Failed to check inode(%"PRIu64") "
+				ntfs_log_error("Failed to check inode(%"PRIu64") "
 						"in parent(%"PRIu64") index.\n",
 						ni->mft_no, ictx->ni->mft_no);
 
@@ -2887,6 +2889,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 				ntfs_inode_close(ni);
 		}
 	} else {
+		ntfs_log_error("Failed to open inode(%"PRIu64")\n", MREF(mref));
 
 remove_index:
 		check_failed("Index entry(%"PRIu64":%s) "
