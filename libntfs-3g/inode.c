@@ -668,6 +668,16 @@ ntfs_inode *ntfs_extent_inode_open(ntfs_inode *base_ni, const leMFT_REF mref)
 		goto out;
 	if (ntfs_file_record_read(base_ni->vol, le64_to_cpu(mref), &ni->mrec, NULL))
 		goto err_out;
+
+	if ((MREF_LE(ni->mrec->base_mft_record) == 0) ||
+			(MREF_LE(ni->mrec->base_mft_record) != base_ni->mft_no)) {
+		ntfs_log_error("Base mft record(%"PRIu64") of inode(%"PRIu64") "
+				"is not a base inode(%"PRIu64")\n",
+				MREF_LE(ni->mrec->base_mft_record), mft_no,
+				base_ni->mft_no);
+		goto err_out;
+	}
+
 	ni->mft_no = mft_no;
 	ni->nr_extents = -1;
 	ni->base_ni = base_ni;
