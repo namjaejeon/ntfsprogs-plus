@@ -832,6 +832,14 @@ static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 		return ret;
 	}
 
+	/* check before rename orphaned file */
+	ret = ntfsck_find_and_check_index(lost_found, ni, fn, FALSE);
+	if (ret == STATUS_ERROR) {
+		ntfs_log_error("Failed to check inode(%"PRIu64")"
+				"to add to lost+found\n", ni->mft_no);
+		goto err_out;
+	}
+
 	/* rename 'FSCK_#' + 'mft_no' */
 	snprintf(filename, MAX_FILENAME_LEN_LOST_FOUND, "%s%"PRIu64"",
 			FILENAME_PREFIX_LOST_FOUND, ni->mft_no);
@@ -856,16 +864,6 @@ static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 	}
 
 	ntfs_attr_reinit_search_ctx(ctx);
-	ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-			CASE_SENSITIVE, 0, NULL, 0, ctx);
-	if (!ret) {
-		ntfs_log_error("Still $FN exist!! remove it\n");
-
-		if (ntfs_attr_record_rm(ctx)) {
-			ntfs_log_error("Failed to remove $FN(%"PRIu64")\n", ni->mft_no);
-			goto err_out;
-		}
-	}
 
 	/* Add FILE_NAME attribute to inode. */
 	if (ntfs_attr_add(ni, AT_FILE_NAME, AT_UNNAMED, 0, (u8 *)new_fn, fn_len)) {
@@ -874,17 +872,13 @@ static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 	}
 
 	ntfs_attr_reinit_search_ctx(ctx);
-	ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0,
-			CASE_SENSITIVE, 0, NULL, 0, ctx);
-	if (ret) {
+	fn = ntfsck_find_file_name_attr(ni, new_fn, ctx);
+	if (!fn) {
 		/* $FILE_NAME lookup failed */
 		ntfs_log_error("Failed to lookup $FILE_NAME, Remove inode(%"PRIu64")\n",
 				ni->mft_no);
 		goto err_out;
 	}
-
-	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
-			le16_to_cpu(ctx->attr->value_offset));
 
 	ret = ntfsck_add_inode_to_parent(vol, lost_found, ni, fn, ctx);
 
@@ -974,28 +968,26 @@ static int ntfsck_cmp_parent_mft_number(ntfs_inode *parent_ni, FILE_NAME_ATTR *f
 	return STATUS_OK;
 }
 
-static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni, ntfs_inode *ni)
+static int ntfsck_check_parent_mft_record(ntfs_inode *parent_ni,
+		ntfs_inode *ni, INDEX_ENTRY *ie)
 {
 	FILE_NAME_ATTR *fn;
+	FILE_NAME_ATTR *ie_fn;
 	ntfs_attr_search_ctx *ctx;
-	int ret = STATUS_ERROR;
 
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!ctx)
 		return STATUS_ERROR;
 
-	ret = ntfs_attr_lookup(AT_FILE_NAME, AT_UNNAMED, 0, CASE_SENSITIVE,
-			0, NULL, 0, ctx);
-	if (ret) {
-		ntfs_log_error("Failed to lookup $FILE_NAME(%"PRIu64")\n",
+	ie_fn = (FILE_NAME_ATTR *)&ie->key;
+
+	fn = ntfsck_find_file_name_attr(ni, ie_fn, ctx);
+	if (!fn) {
+		ntfs_log_error("Failed to find filename in inode(%"PRIu64")\n",
 				ni->mft_no);
 		ntfs_attr_put_search_ctx(ctx);
 		return STATUS_ERROR;
 	}
-
-	/* We know this will always be resident. */
-	fn = (FILE_NAME_ATTR *)((u8 *)ctx->attr +
-			le16_to_cpu(ctx->attr->value_offset));
 
 	if (ntfsck_cmp_parent_mft_number(parent_ni, fn)) {
 		ntfs_log_error("MFT number of parent(%"PRIu64")"
@@ -1052,7 +1044,7 @@ static int ntfsck_check_inode_fields(ntfs_inode *parent_ni,
 	}
 
 	/* check parent mft record of $FN and parent mft record and sequence */
-	if (ntfsck_check_parent_mft_record(parent_ni, ni))
+	if (ntfsck_check_parent_mft_record(parent_ni, ni, ie))
 		return STATUS_ERROR;
 
 	return STATUS_OK;
