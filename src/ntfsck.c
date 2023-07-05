@@ -1709,6 +1709,15 @@ static FILE_NAME_ATTR *ntfsck_find_file_name_attr(ntfs_inode *ni,
 		ntfs_attr_name_free(&filename);
 #endif
 
+		/* Ignore hard links from other directories */
+		if (fn->parent_directory != ie_fn->parent_directory) {
+			ntfs_log_debug("MFT record numbers don't match "
+					"(%llu != %llu)\n",
+					(unsigned long long)MREF_LE(ie_fn->parent_directory),
+					(unsigned long long)MREF_LE(fn->parent_directory));
+			continue;
+		}
+
 		if (fn->file_name_type == FILE_NAME_POSIX)
 			case_sensitive = CASE_SENSITIVE;
 
