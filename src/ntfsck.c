@@ -2837,6 +2837,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		if (MREF_LE(ni->mrec->base_mft_record) != 0) {
 			ntfs_log_error("Inode(%"PRIu64") is not base inode\n",
 					ni->mft_no);
+			ret = STATUS_ERROR;
 			ntfs_inode_close(ni);
 			goto remove_index;
 		}
@@ -2876,8 +2877,12 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 		} else {
 			ret = ntfs_inode_close_in_dir(ni, ictx->ni);
-			if (ret)
+			if (ret) {
+				ntfs_log_error("Failed to close inode(%"PRIu64")\n",
+						ni->mft_no);
 				ntfs_inode_close(ni);
+				goto remove_index;
+			}
 		}
 	} else {
 		ntfs_log_error("Failed to open inode(%"PRIu64")\n", MREF(mref));
