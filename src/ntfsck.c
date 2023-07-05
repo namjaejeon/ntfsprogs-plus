@@ -2994,6 +2994,7 @@ static int ntfsck_check_index_bitmap(ntfs_inode *ni, ntfs_attr *bm_na)
 static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 					 ntfs_index_context *ictx)
 {
+	ntfs_attr *bmp_na;
 	INDEX_ALLOCATION *ia;
 	FILE_NAME_ATTR *ie_fn;
 	INDEX_ENTRY *ie;
@@ -3004,7 +3005,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	u32 ir_size = le32_to_cpu(ir->index.index_length);
 	u32 ib_cnt = 1, i;
 	BOOL ib_corrupted = FALSE;
-	u8 *ir_buf, *ia_buf = NULL, *ibs, *index_end;
+	u8 *ir_buf, *ia_buf = NULL, *bmp_buf = NULL, *ibs, *index_end;
 	char *filename;
 
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
@@ -3012,10 +3013,28 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	if (!ictx->ia_na)
 		return;
 
+	bmp_na = ntfs_attr_open(ictx->ni, AT_BITMAP, ictx->name, ictx->name_len);
+	if (!bmp_na) {
+		ntfs_log_error("Failed to open bitmap\n");
+		ntfs_attr_close(ictx->ia_na);
+		ictx->ia_na = NULL;
+	}
+
+	bmp_buf = malloc(bmp_na->data_size);
+	if (!bmp_buf) {
+		ntfs_log_error("Failed to allocate bitmap buffer\n");
+		ntfs_attr_close(ictx->ia_na);
+		ntfs_attr_close(bmp_na);
+		ictx->ia_na = NULL;
+		return;
+	}
+
 	ir_buf = malloc(le32_to_cpu(ir->index.index_length));
 	if (!ir_buf) {
 		ntfs_log_error("Failed to allocate ir buffer\n");
+		ntfs_free(bmp_buf);
 		ntfs_attr_close(ictx->ia_na);
+		ntfs_attr_close(bmp_na);
 		ictx->ia_na = NULL;
 		return;
 	}
@@ -3029,8 +3048,16 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		goto out;
 	}
 
+	if (ntfs_attr_pread(bmp_na, 0, bmp_na->data_size, bmp_buf) != bmp_na->data_size) {
+		ntfs_log_perror("Failed to read $BITMAP");
+		goto out;
+	}
+
 	ibs = ia_buf;
 	for (i = ictx->ia_na->data_size, vcn = 0; i > 0; i -= ictx->block_size, vcn++) {
+		if (!ntfs_bit_get(bmp_buf, vcn))
+			continue;
+
 		if (ntfs_attr_mst_pread(ictx->ia_na,
 					ntfs_ib_vcn_to_pos(ictx, vcn), 1,
 					ictx->block_size, ibs) != 1) {
@@ -3042,9 +3069,8 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 		if (ntfs_index_block_inconsistent(vol, ictx->ia_na, (INDEX_ALLOCATION *)ibs,
 					ictx->block_size, ni->mft_no,
-					vcn)) {
+					vcn))
 			ib_corrupted = TRUE;
-		}
 		ibs += ictx->block_size;
 	}
 
@@ -3159,9 +3185,12 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 
 out:
 	ntfs_free(ir_buf);
+	if (bmp_buf)
+		ntfs_free(bmp_buf);
 	if (ia_buf)
 		ntfs_free(ia_buf);
 	ntfs_attr_close(ictx->ia_na);
+	ntfs_attr_close(bmp_na);
 	ictx->ia_na = NULL;
 }
 
