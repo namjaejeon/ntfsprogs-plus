@@ -2889,7 +2889,6 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			if (ret) {
 				ntfs_log_error("Failed to close inode(%"PRIu64")\n",
 						ni->mft_no);
-				ntfs_inode_close(ni);
 				goto remove_index;
 			}
 		}
