@@ -3395,6 +3395,23 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		ntfsck_validate_index_blocks(vol, ictx);
 
+		/*
+		 * Re-lookup index root attribute.
+		 * Index root position can be updated by calling
+		 * ntfsck_validate_index_blocks().
+		 */
+		ntfs_attr_reinit_search_ctx(ctx);
+		/* Find the index root attribute in the mft record. */
+		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4,
+				     CASE_SENSITIVE, 0, NULL, 0, ctx)) {
+			ntfs_log_perror("Index root attribute missing in directory inode "
+					"%"PRId64"", dir->ni->mft_no);
+			goto err_continue;
+		}
+		ictx->ir = ir;
+		ir = (INDEX_ROOT *)((u8 *)ctx->attr +
+				le16_to_cpu(ctx->attr->value_offset));
+
 		/* The first index entry. */
 		next = (INDEX_ENTRY*)((u8*)&ir->index +
 				le32_to_cpu(ir->index.entries_offset));
