@@ -2279,8 +2279,8 @@ static int _ntfsck_check_data_attr(ntfs_attr *na, ntfs_attr_search_ctx *actx,
 			}
 		}
 
-		if ((base_ni->allocated_size != na->allocated_size) ||
-				(na->allocated_size != rls->real_size)) {
+		if ((!attr->lowest_vcn && base_ni->allocated_size != na->allocated_size) ||
+		    (na->allocated_size != rls->real_size)) {
 			/* TODO: need to set allocated_size & highest_vcn set */
 			check_failed("Corrupted inode(%"PRIu64") allocated size field.\n "
 					"inode allocated size(%"PRIu64"), "
