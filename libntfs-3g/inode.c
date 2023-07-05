@@ -894,10 +894,12 @@ static int ntfs_inode_sync_file_name(ntfs_inode *ni, ntfs_inode *dir_ni)
 				else
 					err = errno;
 			}
-			ntfs_log_perror("Index lookup failed, inode %lld",
-					(long long)index_ni->mft_no);
+			ntfs_log_perror("Index lookup failed, index_ni:%lld inode:%lld",
+					(long long)index_ni->mft_no,
+					(long long)ni->mft_no);
 			ntfs_index_ctx_put(ictx);
-			if (ni != index_ni && ntfs_inode_close(index_ni) && !err)
+			if (ni != index_ni && dir_ni != index_ni &&
+					ntfs_inode_close(index_ni) && !err)
 				err = errno;
 			continue;
 		}
