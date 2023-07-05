@@ -2193,6 +2193,7 @@ static int _ntfsck_check_data_attr(ntfs_attr *na, ntfs_attr_search_ctx *actx,
 	FILE_ATTR_FLAGS si_flags; /* $STANDARD_INFORMATION flags */
 	FILE_ATTR_FLAGS si_cs_flags; /* $STD_INFO compressed-sparse flags */
 	ATTR_FLAGS cs_flags;      /* $DATA compressed-sparse flags */
+	VCN start_vcn;
 
 	if (!na || !na->ni || !actx || !actx->ntfs_ino)
 		return STATUS_ERROR;
@@ -2206,6 +2207,7 @@ static int _ntfsck_check_data_attr(ntfs_attr *na, ntfs_attr_search_ctx *actx,
 	cs_flags = na->data_flags & (ATTR_IS_SPARSE | ATTR_IS_COMPRESSED);
 
 	attr = actx->attr;
+	start_vcn = sle64_to_cpu(attr->lowest_vcn);
 
 	if (cs_flags) {
 		if (cs_flags & ATTR_IS_SPARSE) {
@@ -2243,7 +2245,10 @@ static int _ntfsck_check_data_attr(ntfs_attr *na, ntfs_attr_search_ctx *actx,
 			}
 		}
 
-		if ((base_ni->allocated_size != na->compressed_size) ||
+		/*
+		 * Compare inode's allocated_size only when start_vcn is zero.
+		 */
+		if ((start_vcn == 0 && (base_ni->allocated_size != na->compressed_size)) ||
 				(na->compressed_size != rls->real_size)) {
 			/* TODO: need to set allocated_size & highest_vcn set */
 			check_failed("Corrupted inode(%"PRIu64") compressed size field.\n "
@@ -2254,7 +2259,8 @@ static int _ntfsck_check_data_attr(ntfs_attr *na, ntfs_attr_search_ctx *actx,
 					na->compressed_size, rls->real_size);
 			if (ntfsck_ask_repair(vol)) {
 				na->compressed_size = rls->real_size;
-				base_ni->allocated_size = na->compressed_size;
+				if (!start_vcn)
+					base_ni->allocated_size = na->compressed_size;
 				attr->compressed_size = cpu_to_sle64(na->compressed_size);
 
 				ntfs_inode_mark_dirty(ni);
@@ -2279,7 +2285,10 @@ static int _ntfsck_check_data_attr(ntfs_attr *na, ntfs_attr_search_ctx *actx,
 			}
 		}
 
-		if ((base_ni->allocated_size != na->allocated_size) ||
+		/*
+		 * Compare inode's allocated_size only when start_vcn is zero.
+		 */
+		if ((start_vcn == 0 && (base_ni->allocated_size != na->allocated_size)) ||
 				(na->allocated_size != rls->real_size)) {
 			/* TODO: need to set allocated_size & highest_vcn set */
 			check_failed("Corrupted inode(%"PRIu64") allocated size field.\n "
@@ -2291,8 +2300,9 @@ static int _ntfsck_check_data_attr(ntfs_attr *na, ntfs_attr_search_ctx *actx,
 					rls->real_size);
 			if (ntfsck_ask_repair(vol)) {
 				na->allocated_size = rls->real_size;
-				base_ni->allocated_size = na->allocated_size;
 				attr->allocated_size = cpu_to_sle64(na->allocated_size);
+				if (!start_vcn)
+					base_ni->allocated_size = na->allocated_size;
 
 				ntfs_inode_mark_dirty(ni);
 				ntfs_inode_mark_dirty(base_ni);
