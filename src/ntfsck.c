@@ -2183,151 +2183,43 @@ static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size)
 	return STATUS_OK;
 }
 
-static int _ntfsck_check_data_attr(ntfs_attr *na, ntfs_attr_search_ctx *actx,
-		struct rl_size *rls)
+static int is_attr_type_directory(ATTR_RECORD *a)
 {
-	ntfs_inode *ni;
-	ntfs_inode *base_ni;
-	ntfs_volume *vol;
-	ATTR_RECORD *attr;
-	FILE_ATTR_FLAGS si_flags; /* $STANDARD_INFORMATION flags */
-	FILE_ATTR_FLAGS si_cs_flags; /* $STD_INFO compressed-sparse flags */
-	ATTR_FLAGS cs_flags;      /* $DATA compressed-sparse flags */
-	VCN start_vcn;
-
-	if (!na || !na->ni || !actx || !actx->ntfs_ino)
-		return STATUS_ERROR;
-
-	base_ni = na->ni;
-	ni = actx->ntfs_ino;
-	vol = base_ni->vol;
-
-	si_flags = base_ni->flags;
-	si_cs_flags = si_flags & (FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED);
-	cs_flags = na->data_flags & (ATTR_IS_SPARSE | ATTR_IS_COMPRESSED);
-
-	attr = actx->attr;
-	start_vcn = sle64_to_cpu(attr->lowest_vcn);
-
-	if (cs_flags) {
-		if (cs_flags & ATTR_IS_SPARSE) {
-			/* sparse file */
-			if (!(si_cs_flags & FILE_ATTR_SPARSE_FILE)) {
-				check_failed("Sparse flags of $STD_INFO and DATA in inode(%"PRIu64") "
-						"are different. Set sparse to inode",
-						base_ni->mft_no);
-
-				if (ntfsck_ask_repair(vol)) {
-					si_flags &= ~FILE_ATTR_COMPRESSED;
-					si_flags |= FILE_ATTR_SPARSE_FILE;
-					base_ni->flags = si_flags;
-
-					ntfs_inode_mark_dirty(base_ni);
-					NInoFileNameSetDirty(base_ni);
-					fsck_err_fixed();
-				}
-			}
-		} else if (cs_flags & ATTR_IS_COMPRESSED) {
-			if (!(si_cs_flags & FILE_ATTR_COMPRESSED)) {
-				check_failed("Compressed flags of $STD_INFO and DATA in inode(%"PRIu64") "
-						"are different. Set compressed to inode.",
-						base_ni->mft_no);
-
-				if (ntfsck_ask_repair(vol)) {
-					si_flags &= ~FILE_ATTR_SPARSE_FILE;
-					si_flags |= FILE_ATTR_COMPRESSED;
-					ni->flags = si_flags;
-
-					ntfs_inode_mark_dirty(base_ni);
-					NInoFileNameSetDirty(base_ni);
-					fsck_err_fixed();
-				}
-			}
-		}
-
-		/*
-		 * Compare inode's allocated_size only when start_vcn is zero.
-		 */
-		if ((start_vcn == 0 && (base_ni->allocated_size != na->compressed_size)) ||
-				(na->compressed_size != rls->real_size)) {
-			/* TODO: need to set allocated_size & highest_vcn set */
-			check_failed("Corrupted inode(%"PRIu64") compressed size field.\n "
-					"inode allocated size(%"PRIu64"), "
-					"$DATA compressed(%"PRIu64") "
-					"cluster run real allocation(%"PRIu64").",
-					base_ni->mft_no, base_ni->allocated_size,
-					na->compressed_size, rls->real_size);
-			if (ntfsck_ask_repair(vol)) {
-				na->compressed_size = rls->real_size;
-				if (!start_vcn)
-					base_ni->allocated_size = na->compressed_size;
-				attr->compressed_size = cpu_to_sle64(na->compressed_size);
-
-				ntfs_inode_mark_dirty(ni);
-				ntfs_inode_mark_dirty(base_ni);
-				NInoFileNameSetDirty(base_ni);
-				fsck_err_fixed();
-			}
-		}
-	} else {
-		if (si_cs_flags) {
-			check_failed("Sparse/Compressed flags of $STD_INFO and DATA in inode(%"PRIu64") "
-					"are different. Clear flag of inode.",
-					base_ni->mft_no);
-
-			if (ntfsck_ask_repair(vol)) {
-				si_flags &= ~(FILE_ATTR_SPARSE_FILE | FILE_ATTR_COMPRESSED);
-				base_ni->flags = si_flags;
-
-				ntfs_inode_mark_dirty(base_ni);
-				NInoFileNameSetDirty(base_ni);
-				fsck_err_fixed();
-			}
-		}
-
-		/*
-		 * Compare inode's allocated_size only when start_vcn is zero.
-		 */
-		if ((start_vcn == 0 && (base_ni->allocated_size != na->allocated_size)) ||
-				(na->allocated_size != rls->real_size)) {
-			/* TODO: need to set allocated_size & highest_vcn set */
-			check_failed("Corrupted inode(%"PRIu64") allocated size field.\n "
-					"inode allocated size(%"PRIu64"), "
-					"$DATA allocated(%"PRIu64"), "
-					"cluster run(total(%"PRIu64"):real(%"PRIu64") allocation.",
-					base_ni->mft_no, ni->allocated_size,
-					na->allocated_size, rls->alloc_size,
-					rls->real_size);
-			if (ntfsck_ask_repair(vol)) {
-				na->allocated_size = rls->real_size;
-				attr->allocated_size = cpu_to_sle64(na->allocated_size);
-				if (!start_vcn)
-					base_ni->allocated_size = na->allocated_size;
-
-				ntfs_inode_mark_dirty(ni);
-				ntfs_inode_mark_dirty(base_ni);
-				NInoFileNameSetDirty(base_ni);
-				fsck_err_fixed();
-			}
-		}
+	switch (a->type) {
+		case AT_INDEX_ALLOCATION:
+		case AT_BITMAP:
+			return 1;
+		default:
+			break;
 	}
-
-	return STATUS_OK;
+	return 0;
 }
 
-static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls)
+static int ntfsck_check_non_resident_attr(ntfs_attr *na,
+		ntfs_attr_search_ctx *actx, struct rl_size *out_rls)
 {
 	BOOL need_fix = FALSE;
-	ntfs_attr_search_ctx *actx;
 	ntfs_volume *vol;
 	ntfs_inode *ni;
+	ATTR_RECORD *a;
+
+	s64 data_size;
+	s64 alloc_size;
+	s64 init_size;
+	s64 new_size;
+	s64 aligned_data_size;
+	s64 lowest_vcn;
 	struct rl_size rls = {0, };
 
 	if (!na || !na->ni || !na->ni->vol)
 		return STATUS_ERROR;
 
+	if (!actx || !actx->attr || !actx->attr->non_resident)
+		return STATUS_ERROR;
+
 	ni = na->ni;
 	vol = na->ni->vol;
+	a =  actx->attr;
 
 	/* check cluster runlist and set bitmap */
 	if (ntfsck_decompose_setbit_runlist(na, &rls, &need_fix)) {
@@ -2355,27 +2247,58 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na, struct rl_size *out_rls
 	}
 
 	/*
+	 * Skip size check of metadata files
+	 */
+	if (utils_is_metadata(ni))
+		goto out;
+
+	/*
+	 * Check size only atrr->lowest_vcn is zero.
+	 */
+	lowest_vcn = sle64_to_cpu(a->lowest_vcn);
+	if (lowest_vcn)
+		goto out;
+
+	data_size = le64_to_cpu(a->data_size);
+	init_size = le64_to_cpu(a->initialized_size);
+	alloc_size = le64_to_cpu(a->allocated_size);
+	aligned_data_size = (data_size + vol->cluster_size - 1) & ~(vol->cluster_size - 1);
+
+	/*
+	 * Reset non-residnet if sizes are invalid,
+	 * And then make it resident attribute.
+	 */
+	if (alloc_size != rls.alloc_size || data_size > alloc_size) {
+		new_size = 0;
+	} else {
+		if (aligned_data_size <= alloc_size)
+			goto out;
+		new_size = alloc_size;
+	}
+
+	check_failed("Size of non resident(%"PRIu64":%d) are corrupted, "
+			"(new size:%"PRIu64", allocated:%"PRIu64", aligned:%"PRIu64" "
+			"data:%"PRIu64", init:%"PRIu64", rls(%"PRIu64":%"PRIu64")",
+			ni->mft_no, a->type, new_size, alloc_size, aligned_data_size,
+			data_size, init_size, rls.real_size, rls.alloc_size);
+
+	/*
 	 * ntfsck_update_runlist will set appropriate flag
 	 * and fields of attribute structure at ntfs_attr_update_meta(),
 	 * that is also including compressed_size and flags.
 	 */
 
-	if (na->type == AT_DATA) {
-		if (need_fix == FALSE && !(ni->flags & FILE_ATTR_SYSTEM) &&
-				!(ni->mrec->flags & MFT_RECORD_IS_DIRECTORY)) {
-			/* check flag & length for $DATA */
+	if (!ntfsck_ask_repair(vol))
+		goto out;
 
-			actx = ntfs_attr_get_search_ctx(ni, NULL);
-			if (!actx)
-				return STATUS_ERROR;
+	if (!new_size && is_attr_type_directory(a))
+		ntfsck_initialize_index_attr(ni);
+	else
+		ntfs_non_resident_attr_shrink(na, new_size);
 
-			_ntfsck_check_data_attr(na, actx, &rls);
-			ntfs_attr_put_search_ctx(actx);
-		}
-	} else {
-		/* check size field */
-	}
+	fsck_err_fixed();
 
+out:
 	if (out_rls)
 		memcpy(out_rls, &rls, sizeof(struct rl_size));
 
@@ -2604,10 +2527,10 @@ static int ntfsck_check_inode_non_resident(ntfs_inode *ni)
 			return STATUS_ERROR;
 		}
 
-		ret = ntfsck_check_non_resident_attr(na, NULL);
+		ret = ntfsck_check_non_resident_attr(na, ctx, NULL);
 		ntfs_attr_close(na);
 		if (ret)
-			break;
+			continue;
 	}
 
 	if (ret == -1 && errno == ENOENT)
@@ -2933,7 +2856,6 @@ err_out:
 
 /*
  * set bitmap of current index context's all parent vcn.
- *
  */
 static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx, s64 size)
 {
@@ -2948,8 +2870,7 @@ static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx, s64
 	if ((ih->ih_flags & NODE_MASK) == LEAF_NODE) {
 		for (i = ictx->pindex; i > 0; i--) {
 			vcn = ictx->parent_vcn[i];
-			if (vcn >= 0 && ((vcn >> 3) + 1) <= size)
-				ntfs_bit_set(ni->fsck_ibm, vcn, 1);
+			ntfs_ibm_modify(ictx, vcn, 1);
 		}
 	}
 	return STATUS_OK;
