@@ -3611,6 +3611,13 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 			}
 		}
 
+		if (value_len > vol->mft_record_size || value_len > attr_len ||
+				value_off == 0 || value_off > attr_len) {
+			errno = EIO;
+			ret = -1;
+			goto out;
+		}
+
 		if (((value_off + value_len + 7) & ~7) > attr_len ||
 		    attr_len < offsetof(ATTR_RECORD, resident_end)) {
 			if (NVolFsck(vol)) {
