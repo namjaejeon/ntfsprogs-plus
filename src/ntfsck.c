@@ -3022,10 +3022,11 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 	MFT_REF mref;
 	VCN vcn;
 	u32 ir_size = le32_to_cpu(ir->index.index_length);
-	u32 ib_cnt = 1, i;
+	u32 ib_cnt = 0, i;
 	BOOL ib_corrupted = FALSE;
 	u8 *ir_buf, *ia_buf = NULL, *bmp_buf = NULL, *ibs, *index_end;
 	char *filename;
+	u64 max_vcn_bits;
 
 	ictx->ia_na = ntfs_attr_open(ni, AT_INDEX_ALLOCATION,
 			ictx->name, ictx->name_len);
@@ -3072,8 +3073,13 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		goto out;
 	}
 
+	max_vcn_bits = bmp_na->data_size * 8;
+
 	ibs = ia_buf;
 	for (i = ictx->ia_na->data_size, vcn = 0; i > 0; i -= ictx->block_size, vcn++) {
+		if (max_vcn_bits <= vcn)
+			break;
+
 		if (!ntfs_bit_get(bmp_buf, vcn))
 			continue;
 
@@ -3091,6 +3097,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 					vcn))
 			ib_corrupted = TRUE;
 		ibs += ictx->block_size;
+		ib_cnt++;
 	}
 
 	if (ib_corrupted == FALSE)
@@ -3144,9 +3151,6 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 					errno);
 		ntfs_inode_close(cni);
 	}
-
-	if (ictx->ia_na->data_size > ictx->block_size - 1)
-		ib_cnt = ictx->ia_na->data_size / ictx->block_size;
 
 	ia = (INDEX_ALLOCATION *)ia_buf;
 	for (i = 0; i < ib_cnt; i++) {
