@@ -2895,7 +2895,9 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			dir->ni = ni;
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 		} else {
-			ret = ntfs_inode_close_in_dir(ni, ictx->ni);
+
+			ntfs_inode_sync(ni);
+			ret = ntfs_inode_close(ni);
 			if (ret) {
 				ntfs_log_error("Failed to close inode(%"PRIu64")\n",
 						ni->mft_no);
