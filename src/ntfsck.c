@@ -1942,7 +1942,10 @@ static runlist_element *ntfsck_decompose_runlist(ntfs_attr *na, BOOL *need_fix)
 					next_vcn, NULL, 0, actx)) {
 			err = ENOENT;
 			if (errno == EIO) {
-				if (rl) free(rl);
+				if (rl) {
+					free(rl);
+					rl = NULL;
+				}
 				na->rl = NULL;
 				*need_fix = TRUE;
 				goto out;
