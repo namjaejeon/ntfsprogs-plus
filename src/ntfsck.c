@@ -1058,7 +1058,7 @@ static int ntfsck_check_inode_fields(ntfs_inode *parent_ni,
 
 static int ntfsck_add_index_entry_orphaned_file(ntfs_volume *vol, s64 mft_no)
 {
-	ntfs_attr_search_ctx *ctx;
+	ntfs_attr_search_ctx *ctx = NULL;
 	FILE_NAME_ATTR *fn;
 	ntfs_inode *parent_ni = NULL;
 	ntfs_inode *ni = NULL;
