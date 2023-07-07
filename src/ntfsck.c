@@ -3635,7 +3635,7 @@ static int ntfsck_reset_dirty(ntfs_volume *vol)
 {
 	le16 flags;
 
-	if (!(vol->flags | VOLUME_IS_DIRTY))
+	if (!(vol->flags & VOLUME_IS_DIRTY))
 		return STATUS_OK;
 
 	ntfs_log_verbose("Resetting dirty flag.\n");
