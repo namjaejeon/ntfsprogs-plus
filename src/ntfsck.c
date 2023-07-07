@@ -845,6 +845,11 @@ static int ntfsck_add_inode_to_lostfound(ntfs_inode *ni, FILE_NAME_ATTR *fn,
 	snprintf(filename, MAX_FILENAME_LEN_LOST_FOUND, "%s%"PRIu64"",
 			FILENAME_PREFIX_LOST_FOUND, ni->mft_no);
 	ucs_namelen = ntfs_mbstoucs(filename, &ucs_name);
+	if (ucs_namelen <= 0) {
+		ntfs_log_error("ntfs_mbstoucs failed, ucs_namelen : %d\n",
+				ucs_namelen);
+		goto err_out;
+	}
 
 	fn_len = sizeof(FILE_NAME_ATTR) + ucs_namelen * sizeof(ntfschar);
 	new_fn = ntfs_calloc(fn_len);
