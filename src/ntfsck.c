@@ -3392,6 +3392,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 	ni = ntfs_inode_open(vol, FILE_root);
 	if (!ni) {
+		free(dir);
 		ntfs_log_error("Failed to open root inode\n");
 		return -1;
 	}
