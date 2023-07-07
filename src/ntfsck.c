@@ -3046,6 +3046,7 @@ static void ntfsck_validate_index_blocks(ntfs_volume *vol,
 		ntfs_log_error("Failed to open bitmap\n");
 		ntfs_attr_close(ictx->ia_na);
 		ictx->ia_na = NULL;
+		return;
 	}
 
 	bmp_buf = malloc(bmp_na->data_size);
