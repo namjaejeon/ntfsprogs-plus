@@ -224,7 +224,7 @@ static int ntfsck_check_attr_list(ntfs_inode *ni);
 char ntfsck_mft_bmp_bit_get(const u64 bit)
 {
 	u32 bm_i = FB_ROUND_DOWN(bit >> NTFSCK_BYTE_TO_BITS);
-	s64 bm_pos = bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
+	s64 bm_pos = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
 
 	if (bm_i >= max_mft_bmp_cnt || !fsck_mft_bmp[bm_i])
 		return 0;
@@ -235,7 +235,7 @@ char ntfsck_mft_bmp_bit_get(const u64 bit)
 static int _ntfsck_mft_record_bitmap_set(u64 mft_no, int value)
 {
 	u32 bm_i = FB_ROUND_DOWN(mft_no >> NTFSCK_BYTE_TO_BITS);
-	s64 bm_pos = bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
+	s64 bm_pos = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
 	s64 mft_diff = mft_no - bm_pos;
 
 	if (bm_i >= max_mft_bmp_cnt) {
@@ -401,7 +401,7 @@ static int ntfsck_set_lcnbmp_range(s64 lcn, s64 length, u8 bit)
 	s64 end = lcn + length - 1;
 	u32 bm_i = FB_ROUND_DOWN(lcn >> NTFSCK_BYTE_TO_BITS);
 	u32 bm_end = FB_ROUND_DOWN(end >> NTFSCK_BYTE_TO_BITS);
-	s64 bm_pos = bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
+	s64 bm_pos = (s64)bm_i << (NTFS_BUF_SIZE_BITS + NTFSCK_BYTE_TO_BITS);
 	s64 lcn_diff = lcn - bm_pos;
 
 	if (length <= 0)
