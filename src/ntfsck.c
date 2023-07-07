@@ -3921,6 +3921,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			ret = STATUS_ERROR;
 			goto put_index_ctx;
 		}
+		ntfs_attr_put_search_ctx(sys_ctx);
 
 		/* TODO: Validate index entry of system file */
 
@@ -3930,7 +3931,6 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			goto put_index_ctx;
 
 		ntfs_index_ctx_reinit(ictx);
-		ntfs_attr_put_search_ctx(sys_ctx);
 		if (ntfsck_opened_ni_vol(mft_num) == TRUE)
 			continue;
 		ntfs_inode_close(sys_ni);
