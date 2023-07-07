@@ -834,6 +834,11 @@ static int ntfs_inode_sync_file_name(ntfs_inode *ni, ntfs_inode *dir_ni)
 
 	ntfs_log_trace("Entering for inode %lld\n", (long long)ni->mft_no);
 
+	if (ni == dir_ni) {
+		err = -EINVAL;
+		goto err_out;
+	}
+
 	ctx = ntfs_attr_get_search_ctx(ni, NULL);
 	if (!ctx) {
 		err = errno;
@@ -867,7 +872,7 @@ static int ntfs_inode_sync_file_name(ntfs_inode *ni, ntfs_inode *dir_ni)
 			if (dir_ni)
 				index_ni = dir_ni;
 			else
-				index_ni = ntfs_inode_open(ni->vol, 
+				index_ni = ntfs_inode_open(ni->vol,
 					le64_to_cpu(fn->parent_directory));
 		if (!index_ni) {
 			if (!err)
@@ -876,6 +881,13 @@ static int ntfs_inode_sync_file_name(ntfs_inode *ni, ntfs_inode *dir_ni)
 				(long long)MREF_LE(fn->parent_directory));
 			continue;
 		}
+
+		if (MREF_LE(fn->parent_directory) != index_ni->mft_no) {
+			if (!dir_ni && index_ni != ni)
+				ntfs_inode_close(index_ni);
+			continue;
+		}
+
 		ictx = ntfs_index_ctx_get(index_ni, NTFS_INDEX_I30, 4);
 		if (!ictx) {
 			if (!err)
@@ -898,7 +910,7 @@ static int ntfs_inode_sync_file_name(ntfs_inode *ni, ntfs_inode *dir_ni)
 					(long long)index_ni->mft_no,
 					(long long)ni->mft_no);
 			ntfs_index_ctx_put(ictx);
-			if (ni != index_ni && dir_ni != index_ni &&
+			if (ni != index_ni && !dir_ni &&
 					ntfs_inode_close(index_ni) && !err)
 				err = errno;
 			continue;
@@ -1122,6 +1134,7 @@ int ntfs_inode_close_in_dir(ntfs_inode *ni, ntfs_inode *dir_ni)
 
 	res = ntfs_inode_sync_in_dir(ni, dir_ni);
 	if (res) {
+		ntfs_log_perror("%s failed\n", __func__);
 		if (errno != EIO)
 			errno = EBUSY;
 	} else
