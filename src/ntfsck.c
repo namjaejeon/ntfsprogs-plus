@@ -2471,8 +2471,6 @@ check_next:
 out:
 	if (bm_na)
 		ntfs_attr_close(bm_na);
-	if (ia_na)
-		ntfs_attr_close(ia_na);
 
 	return ret;
 
