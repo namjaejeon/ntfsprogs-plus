@@ -220,6 +220,7 @@ static u8 *ntfsck_get_lcnbmp(s64 pos);
 static void ntfsck_check_mft_record_unused(ntfs_volume *vol, s64 mft_num);
 static int ntfsck_set_mft_record_bitmap(ntfs_inode *ni);
 static int ntfsck_check_attr_list(ntfs_inode *ni);
+static inline BOOL ntfsck_opened_ni_vol(s64 mft_num);
 
 char ntfsck_mft_bmp_bit_get(const u64 bit)
 {
@@ -2661,9 +2662,6 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 	int32_t flags;
 	int ret;
 
-	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
-		goto err_out;
-
 	if (ni->attr_list) {
 		if (ntfsck_check_attr_list(ni))
 			goto err_out;
@@ -2671,6 +2669,9 @@ static int ntfsck_check_inode(ntfs_inode *ni, INDEX_ENTRY *ie,
 		if (ntfs_inode_attach_all_extents(ni))
 			goto err_out;
 	}
+
+	if (ntfsck_check_inode_fields(ictx->ni, ni, ie))
+		goto err_out;
 
 	ret = ntfsck_check_inode_non_resident(ni);
 	if (ret)
@@ -2768,7 +2769,7 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		return STATUS_ERROR;
 
 	mref = le64_to_cpu(ie->indexed_file);
-	if (MREF(mref) == FILE_root)
+	if (ntfsck_opened_ni_vol(MREF(mref)) == TRUE)
 		return STATUS_OK;
 
 	filename = ntfs_attr_name_get(ie_fn->file_name, ie_fn->file_name_length);
@@ -2806,6 +2807,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 						"in parent(%"PRIu64") index.\n",
 						ni->mft_no, ictx->ni->mft_no);
 
+				NInoFileNameClearDirty(ni);
+				NInoClearDirty(ni);
 				ntfs_inode_close(ni);
 				goto remove_index;
 			}
