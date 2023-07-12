@@ -133,7 +133,6 @@
 #include "utils.h"
 #include "ntfstime.h"
 #include "sd.h"
-#include "boot.h"
 #include "attrdef.h"
 /* #include "version.h" */
 #include "logging.h"
@@ -4384,6 +4383,35 @@ bb_err:
 	return -1;
 }
 
+#define BOOTCODE_SIZE 426
+
+/* A dummy_boot_code array is from dosfstools 2.11(GPLv2) */
+char dummy_boot_code[BOOTCODE_SIZE] =
+"\x0e"          /* push cs */
+"\x1f"          /* pop ds */
+"\xbe\x5b\x7c"  /* mov si, offset message_txt */
+
+/* write_msg: */
+"\xac"          /* lodsb */
+"\x22\xc0"      /* and al, al */
+"\x74\x0b"      /* jz key_press */
+"\x56"          /* push si */
+"\xb4\x0e"      /* mov ah, 0eh */
+"\xbb\x07\x00"  /* mov bx, 0007h */
+"\xcd\x10"      /* int 10h */
+"\x5e"          /* pop si */
+"\xeb\xf0"      /* jmp write_msg */
+
+/* key_press: */
+"\x32\xe4"      /* xor ah, ah */
+"\xcd\x16"      /* int 16h */
+"\xcd\x19"      /* int 19h */
+"\xeb\xfe"      /* foo: jmp foo */
+/* message_txt: */
+
+"This is not a bootable disk.  Please insert a bootable floppy and\r\n"
+"press any key to try again ... \r\n";
+
 /**
  * mkntfs_create_root_structures -
  */
@@ -4645,7 +4673,12 @@ static BOOL mkntfs_create_root_structures(void)
 	bs = ntfs_calloc(8192);
 	if (!bs)
 		return FALSE;
-	memcpy(bs, boot_array, sizeof(boot_array));
+
+	bs->jump[0] = 0xeb;
+	bs->jump[1] = 0x52;
+	bs->jump[2] = 0x90;
+	bs->oem_id = const_cpu_to_le64(0x202020205346544eULL);
+
 	/*
 	 * Create the boot sector in bs. Note, that bs is already zeroed
 	 * in the boot sector section and that it has the NTFS OEM id/magic
@@ -4715,6 +4748,9 @@ static BOOL mkntfs_create_root_structures(void)
 	 * ../libntfs/bootsect.c for how to calculate it.
 	 */
 	bs->checksum = const_cpu_to_le32(0);
+	memcpy(bs->bootstrap, dummy_boot_code, BOOTCODE_SIZE);
+	bs->end_of_sector_marker = 0xaa55;
+
 	/* Make sure the bootsector is ok. */
 	if (!ntfs_boot_sector_is_ntfs(bs)) {
 		free(bs);
