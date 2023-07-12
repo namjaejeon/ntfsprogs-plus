@@ -49,7 +49,7 @@ endif
 AM_CPPFLAGS		= -I$(top_srcdir)/include/ntfs-3g $(all_includes)
 
 mkntfs_CPPFLAGS		= $(AM_CPPFLAGS) $(MKNTFS_CPPFLAGS)
-mkntfs_SOURCES		= attrdef.c attrdef.h boot.c boot.h sd.c sd.h mkntfs.c utils.c utils.h
+mkntfs_SOURCES		= attrdef.c attrdef.h sd.c sd.h mkntfs.c utils.c utils.h
 mkntfs_LDADD		= $(AM_LIBS) $(MKNTFS_LIBS)
 mkntfs_LDFLAGS		= $(AM_LFLAGS)
 
