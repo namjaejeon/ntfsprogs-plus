@@ -3501,6 +3501,8 @@ err_continue:
 			ntfs_index_ctx_put(ictx);
 			ictx = NULL;
 		}
+
+		ntfs_inode_invalidate(dir->ni->vol, dir->ni->mft_no);
 		ntfs_inode_close(dir->ni);
 		ntfs_list_del(&dir->list);
 		free(dir);
