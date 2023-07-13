@@ -131,7 +131,7 @@ static struct {
 
 struct dir {
 	struct ntfs_list_head list;
-	ntfs_inode *ni;
+	u64 mft_no;
 };
 
 struct ntfsls_dirent {
@@ -2824,7 +2824,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 				goto err_out;
 			}
 
-			dir->ni = ni;
+			dir->mft_no = ni->mft_no;
+			ntfs_inode_close(ni);
 			ntfs_list_add_tail(&dir->list, &ntfs_dirs_list);
 		} else {
 			ret = ntfs_inode_close_in_dir(ni, ictx->ni);
@@ -3302,7 +3303,7 @@ err_out:
 
 static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 {
-	ntfs_inode *ni;
+	ntfs_inode *dir_ni;
 	struct dir *dir;
 	INDEX_ROOT *ir;
 	INDEX_ENTRY *next;
@@ -3318,23 +3319,27 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		return -1;
 	}
 
-	ni = ntfs_inode_open(vol, FILE_root);
-	if (!ni) {
+	dir_ni = ntfs_inode_open(vol, FILE_root);
+	if (!dir_ni) {
 		free(dir);
 		ntfs_log_error("Failed to open root inode\n");
 		return -1;
 	}
 
-	ntfsck_check_lost_found(vol, ni);
+	ntfsck_check_lost_found(vol, dir_ni);
 
-	dir->ni = ni;
+	dir->mft_no = dir_ni->mft_no;
+	ntfs_inode_close(dir_ni);
 	ntfs_list_add(&dir->list, &ntfs_dirs_list);
 
 	while (!ntfs_list_empty(&ntfs_dirs_list)) {
 
 		dir = ntfs_list_entry(ntfs_dirs_list.next, struct dir, list);
+		dir_ni = ntfs_inode_open(vol, dir->mft_no);
+		if (!dir_ni)
+			goto err_continue;
 
-		ctx = ntfs_attr_get_search_ctx(dir->ni, NULL);
+		ctx = ntfs_attr_get_search_ctx(dir_ni, NULL);
 		if (!ctx)
 			goto err_continue;
 
@@ -3342,12 +3347,12 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4, CASE_SENSITIVE, 0, NULL,
 					0, ctx)) {
 			ntfs_log_perror("Index root attribute missing in directory inode "
-					"%"PRId64"", dir->ni->mft_no);
+					"%"PRId64"", dir_ni->mft_no);
 			ntfs_attr_put_search_ctx(ctx);
 			goto err_continue;
 		}
 
-		ictx = ntfs_index_ctx_get(dir->ni, NTFS_INDEX_I30, 4);
+		ictx = ntfs_index_ctx_get(dir_ni, NTFS_INDEX_I30, 4);
 		if (!ictx) {
 			ntfs_attr_put_search_ctx(ctx);
 			goto err_continue;
@@ -3389,7 +3394,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 		if (ntfs_attr_lookup(AT_INDEX_ROOT, NTFS_INDEX_I30, 4,
 				     CASE_SENSITIVE, 0, NULL, 0, ctx)) {
 			ntfs_log_perror("Index root attribute missing in directory inode "
-					"%"PRId64"", dir->ni->mft_no);
+					"%"PRId64"", dir_ni->mft_no);
 			goto err_continue;
 		}
 		ictx->ir = ir;
@@ -3402,20 +3407,20 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		if (next->ie_flags & INDEX_ENTRY_NODE) {
 			/* read $IA */
-			ictx->ia_na = ntfs_attr_open(dir->ni, AT_INDEX_ALLOCATION,
+			ictx->ia_na = ntfs_attr_open(dir_ni, AT_INDEX_ALLOCATION,
 							ictx->name, ictx->name_len);
 			if (!ictx->ia_na) {
 				ntfs_log_perror("Failed to open index allocation of inode "
-						"%"PRIu64"", dir->ni->mft_no);
+						"%"PRIu64"", dir_ni->mft_no);
 				goto err_continue;
 			}
 
 			/* read $BITMAP */
-			bm_na = ntfs_attr_open(dir->ni, AT_BITMAP, NTFS_INDEX_I30, 4);
+			bm_na = ntfs_attr_open(dir_ni, AT_BITMAP, NTFS_INDEX_I30, 4);
 			if (bm_na) {
 				/* allocate for $IA bitmap */
-				dir->ni->fsck_ibm = ntfs_calloc(bm_na->allocated_size);
-				if (!dir->ni->fsck_ibm) {
+				dir_ni->fsck_ibm = ntfs_calloc(bm_na->allocated_size);
+				if (!dir_ni->fsck_ibm) {
 					ntfs_log_perror("Failed to allocate memory\n");
 					ntfs_attr_put_search_ctx(ctx);
 					goto err_continue;
@@ -3444,7 +3449,7 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 			 */
 			if (ctx->attr->value_length != 48) {
 				check_failed("The value length of empty $IR(mft no : %lld) is invalid,"
-						"Resize it", (unsigned long long)dir->ni->mft_no);
+						"Resize it", (unsigned long long)dir_ni->mft_no);
 				if (ntfsck_ask_repair(vol)) {
 					ntfs_resident_attr_value_resize(ctx->mrec, ctx->attr, 48);
 					fsck_err_fixed();
@@ -3475,18 +3480,18 @@ check_index:
 
 			/* check bitmap */
 			if (bm_na && ictx->ib)
-				ntfsck_set_index_bitmap(dir->ni, ictx, bm_na->allocated_size);
+				ntfsck_set_index_bitmap(dir_ni, ictx, bm_na->allocated_size);
 		}
 
 next_dir:
 		/* compare index allocation bitmap between disk & fsck */
 		if (bm_na) {
-			if (ntfsck_check_index_bitmap(dir->ni, bm_na))
+			if (ntfsck_check_index_bitmap(dir_ni, bm_na))
 				goto err_continue;
 
-			if (dir->ni->fsck_ibm) {
-				free(dir->ni->fsck_ibm);
-				dir->ni->fsck_ibm = NULL;
+			if (dir_ni->fsck_ibm) {
+				free(dir_ni->fsck_ibm);
+				dir_ni->fsck_ibm = NULL;
 			}
 		}
 
@@ -3502,8 +3507,7 @@ err_continue:
 			ictx = NULL;
 		}
 
-		ntfs_inode_invalidate(dir->ni->vol, dir->ni->mft_no);
-		ntfs_inode_close(dir->ni);
+		ntfs_inode_close(dir_ni);
 		ntfs_list_del(&dir->list);
 		free(dir);
 	}
