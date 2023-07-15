@@ -2881,22 +2881,34 @@ err_out:
 /*
  * set bitmap of current index context's all parent vcn.
  */
-static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx, s64 size)
+static int ntfsck_set_index_bitmap(ntfs_inode *ni, ntfs_index_context *ictx,
+		ntfs_attr *bm_na)
 {
 	INDEX_HEADER *ih;
 	s64 vcn = -1;
+	s64 pos;
+	u32 bpos;
 	int i;
 
 	if (!ictx->ib)
 		return STATUS_ERROR;
 
 	ih = &ictx->ib->index;
-	if ((ih->ih_flags & NODE_MASK) == LEAF_NODE) {
-		for (i = ictx->pindex; i > 0; i--) {
-			vcn = ictx->parent_vcn[i];
-			ntfs_ibm_modify(ictx, vcn, 1);
-		}
+	if ((ih->ih_flags & NODE_MASK) != LEAF_NODE)
+		return STATUS_OK;
+
+	pos = (vcn << ictx->vcn_size_bits) / ictx->block_size;
+	bpos = pos / 8;
+
+	if (bm_na->data_size < bpos + 1)
+		ictx->ni->fsck_ibm = ntfs_realloc(ictx->ni->fsck_ibm,
+				(bm_na->data_size + 8) & ~7);
+
+	for (i = ictx->pindex; i > 0; i--) {
+		vcn = ictx->parent_vcn[i];
+		ntfs_bit_set(ictx->ni->fsck_ibm, vcn, 1);
 	}
+
 	return STATUS_OK;
 }
 
@@ -3350,8 +3362,11 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 		dir = ntfs_list_entry(ntfs_dirs_list.next, struct dir, list);
 		dir_ni = ntfs_inode_open(vol, dir->mft_no);
-		if (!dir_ni)
+		if (!dir_ni) {
+			ntfs_log_perror("Failed to open inode (%"PRIu64")\n",
+					dir->mft_no);
 			goto err_continue;
+		}
 
 		ctx = ntfs_attr_get_search_ctx(dir_ni, NULL);
 		if (!ctx)
@@ -3431,12 +3446,17 @@ static int ntfsck_scan_index_entries_btree(ntfs_volume *vol)
 
 			/* read $BITMAP */
 			bm_na = ntfs_attr_open(dir_ni, AT_BITMAP, NTFS_INDEX_I30, 4);
-			if (bm_na) {
-				/* allocate for $IA bitmap */
+			if (!bm_na) {
+				ntfs_log_perror("Failed to open bitmap of inode "
+						"%"PRIu64"", dir_ni->mft_no);
+				goto err_continue;
+			}
+
+			/* allocate for $IA bitmap */
+			if (!dir_ni->fsck_ibm) {
 				dir_ni->fsck_ibm = ntfs_calloc(bm_na->allocated_size);
 				if (!dir_ni->fsck_ibm) {
-					ntfs_log_perror("Failed to allocate memory\n");
-					ntfs_attr_put_search_ctx(ctx);
+					ntfs_log_perror("Failed to allocate fsck_ibm memory\n");
 					goto err_continue;
 				}
 			}
@@ -3494,7 +3514,7 @@ check_index:
 
 			/* check bitmap */
 			if (bm_na && ictx->ib)
-				ntfsck_set_index_bitmap(dir_ni, ictx, bm_na->allocated_size);
+				ntfsck_set_index_bitmap(dir_ni, ictx, bm_na);
 		}
 
 next_dir:
@@ -3502,11 +3522,6 @@ next_dir:
 		if (bm_na) {
 			if (ntfsck_check_index_bitmap(dir_ni, bm_na))
 				goto err_continue;
-
-			if (dir_ni->fsck_ibm) {
-				free(dir_ni->fsck_ibm);
-				dir_ni->fsck_ibm = NULL;
-			}
 		}
 
 err_continue:
@@ -3519,6 +3534,11 @@ err_continue:
 			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 			ntfs_index_ctx_put(ictx);
 			ictx = NULL;
+		}
+
+		if (dir_ni->fsck_ibm) {
+			free(dir_ni->fsck_ibm);
+			dir_ni->fsck_ibm = NULL;
 		}
 
 		ntfs_inode_close(dir_ni);
