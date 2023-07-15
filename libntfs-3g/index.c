@@ -1131,7 +1131,7 @@ static int ntfs_ibm_add(ntfs_index_context *icx)
 	u8 bmp[8];
 
 	ntfs_log_trace("Entering\n");
-	
+
 	if (ntfs_attr_exist(icx->ni, AT_BITMAP, icx->name, icx->name_len))
 		return STATUS_OK;
 	/*
@@ -1143,7 +1143,17 @@ static int ntfs_ibm_add(ntfs_index_context *icx)
 		ntfs_log_perror("Failed to add AT_BITMAP");
 		return STATUS_ERROR;
 	}
-	
+
+	/* only for fsck : allocate fsck_ibm */
+	if (NVolIsOnFsck(icx->ni->vol) && !icx->ni->fsck_ibm) {
+		icx->ni->fsck_ibm = ntfs_calloc(sizeof(bmp));
+		if (!icx->ni->fsck_ibm) {
+			ntfs_log_perror("Failed to create fsck_ibm of inode(%"PRIu64"",
+					icx->ni->mft_no);
+			return STATUS_ERROR;
+		}
+	}
+
 	return STATUS_OK;
 }
 

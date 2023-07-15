@@ -122,6 +122,11 @@ ntfs_inode *ntfs_inode_allocate(ntfs_volume *vol)
  */
 static void __ntfs_inode_release(ntfs_inode *ni)
 {
+	if (NVolFsck(ni->vol)) {
+		if (ni->fsck_ibm)
+			free(ni->fsck_ibm);
+	}
+
 	if (NInoDirty(ni))
 		ntfs_log_error("Releasing dirty inode %lld!\n", 
 			       (long long)ni->mft_no);
