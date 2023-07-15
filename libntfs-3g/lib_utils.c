@@ -44,7 +44,7 @@
  * Return:  Pointer  Success, an attribute was found
  *	    NULL     Error, no matching attributes were found
  */
-ATTR_RECORD * find_attribute(const ATTR_TYPES type, ntfs_attr_search_ctx *ctx)
+ATTR_RECORD *find_attribute(const ATTR_TYPES type, ntfs_attr_search_ctx *ctx)
 {
 	if (!ctx) {
 		errno = EINVAL;
@@ -61,6 +61,42 @@ ATTR_RECORD * find_attribute(const ATTR_TYPES type, ntfs_attr_search_ctx *ctx)
 }
 
 /**
+ * find_first_inode_attribute - Find the first attribute of a given type
+ * it is same as find_first_attribute except using ctx
+ * which have inode structure(ni).
+ * find_first_attribute() can not find attribute if first attribute is
+ * in extent mft record.
+ */
+ATTR_RECORD *find_first_inode_attribute(const ATTR_TYPES type, ntfs_inode *ni)
+{
+	ntfs_attr_search_ctx *ctx;
+	MFT_RECORD *mft;
+	ATTR_RECORD *rec;
+
+	if (!ni) {
+		errno = EINVAL;
+		return NULL;
+	}
+
+	mft = ni->mrec;
+
+	ctx = ntfs_attr_get_search_ctx(ni, mft);
+	if (!ctx) {
+		ntfs_log_error("Couldn't create a search context.\n");
+		return NULL;
+	}
+
+	rec = find_attribute(type, ctx);
+	ntfs_attr_put_search_ctx(ctx);
+	if (rec)
+		ntfs_log_debug("find_first_attribute: found attr of type 0x%02x.\n", le32_to_cpu(type));
+	else
+		ntfs_log_debug("find_first_attribute: didn't find attr of type 0x%02x.\n", le32_to_cpu(type));
+	return rec;
+
+}
+
+/**
  * find_first_attribute - Find the first attribute of a given type
  * @type:  An attribute type, e.g. AT_FILE_NAME
  * @mft:   A buffer containing a raw MFT record
@@ -74,7 +110,7 @@ ATTR_RECORD * find_attribute(const ATTR_TYPES type, ntfs_attr_search_ctx *ctx)
  * Return:  Pointer  Success, an attribute was found
  *	    NULL     Error, no matching attributes were found
  */
-ATTR_RECORD * find_first_attribute(const ATTR_TYPES type, MFT_RECORD *mft)
+ATTR_RECORD *find_first_attribute(const ATTR_TYPES type, MFT_RECORD *mft)
 {
 	ntfs_attr_search_ctx *ctx;
 	ATTR_RECORD *rec;
@@ -154,7 +190,7 @@ int utils_is_metadata(ntfs_inode *inode)
 			return 1;
 	}
 
-	rec = find_first_attribute(AT_FILE_NAME, inode->mrec);
+	rec = find_first_inode_attribute(AT_FILE_NAME, inode);
 	if (!rec)
 		return -1;
 
