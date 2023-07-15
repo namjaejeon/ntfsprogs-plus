@@ -2218,18 +2218,6 @@ static int ntfsck_update_runlist(ntfs_attr *na, s64 new_size)
 	return STATUS_OK;
 }
 
-static int is_attr_type_directory(ATTR_RECORD *a)
-{
-	switch (a->type) {
-		case AT_INDEX_ALLOCATION:
-		case AT_BITMAP:
-			return 1;
-		default:
-			break;
-	}
-	return 0;
-}
-
 static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 		ntfs_attr_search_ctx *actx, struct rl_size *out_rls)
 {
@@ -2326,10 +2314,7 @@ static int ntfsck_check_non_resident_attr(ntfs_attr *na,
 	if (!ntfsck_ask_repair(vol))
 		goto out;
 
-	if (!new_size && is_attr_type_directory(a))
-		ntfsck_initialize_index_attr(ni);
-	else
-		ntfs_non_resident_attr_shrink(na, new_size);
+	ntfs_non_resident_attr_shrink(na, new_size);
 
 	fsck_err_fixed();
 
@@ -2391,9 +2376,6 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 		goto init_all;
 	}
 
-	ntfs_attr_close(ia_na);
-	ia_na = NULL;
-
 	/*
 	 * check $BITMAP's cluster run
 	 * TODO: is it possible multiple $BITMAP attrib in inode?
@@ -2415,12 +2397,18 @@ static int ntfsck_check_directory(ntfs_inode *ni)
 	}
 
 check_next:
-	/* TODO: need to check flag & size in na ? */
-	/* TODO: other checking ? */
+	/* $INDEX_ALLOCATION actual size is zero, remove it with $BITMAP */
+	if (ia_na && ia_na->data_size == 0) {
+		ntfs_attr_rm(ia_na);
+		if (bm_na)
+			ntfs_attr_rm(bm_na);
+	}
 
 out:
 	if (bm_na)
 		ntfs_attr_close(bm_na);
+	if (ia_na)
+		ntfs_attr_close(ia_na);
 
 	return ret;
 
@@ -3837,6 +3825,7 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			ntfs_log_error("MFT bitmap of system file(%"PRIu64") "
 					"is not set\n", mft_num);
 			ret = STATUS_ERROR;
+			ntfs_inode_close(sys_ni);
 			goto put_index_ctx;
 		}
 
