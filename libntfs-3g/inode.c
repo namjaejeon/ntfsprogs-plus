@@ -991,7 +991,7 @@ err_out:
  *	EBUSY	- Inode and/or one of its extents is busy, try again later.
  *	EIO	- I/O error while writing the inode (or one of its extents).
  */
-static int ntfs_inode_sync_in_dir(ntfs_inode *ni, ntfs_inode *dir_ni)
+int ntfs_inode_sync_in_dir(ntfs_inode *ni, ntfs_inode *dir_ni)
 {
 	int ret = 0;
 	int err = 0;
