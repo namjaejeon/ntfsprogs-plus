@@ -192,6 +192,7 @@ static ntfs_inode *ntfs_inode_real_open(ntfs_volume *vol, const MFT_REF mref)
 			if (ntfsck_ask_repair(vol)) {
 				ni->mrec->flags |= MFT_RECORD_IN_USE;
 				ntfs_inode_mark_dirty(ni);
+				fsck_err_fixed();
 			}
 		} else {
 			errno = ENOENT;
