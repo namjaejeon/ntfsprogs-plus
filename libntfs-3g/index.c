@@ -635,7 +635,8 @@ int ntfs_index_entry_inconsistent(ntfs_volume *vol, INDEX_ENTRY *ie,
 	if (ie->ie_flags & INDEX_ENTRY_NODE) {
 		if (((le16_to_cpu(ie->key_length) + offsetof(INDEX_ENTRY, key) + 7) & ~7) !=
 		    (le16_to_cpu(ie->length) - 8)) {
-			check_failed("there is no vcn space in index node\n");
+			/* TODO: need to fix it */
+			ntfs_log_error("there is no vcn space in index node\n");
 			return -1;
 		}
 	}

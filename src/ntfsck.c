@@ -3779,6 +3779,7 @@ static int ntfsck_validate_system_file(ntfs_inode *ni)
 							zero_bm_size, written);
 					return -EIO;
 				}
+				fsck_err_fixed();
 			}
 		}
 		break;
