@@ -3850,6 +3850,8 @@ static int ntfsck_check_system_files(ntfs_volume *vol)
 			goto put_index_ctx;
 		}
 
+		ntfs_inode_attach_all_extents(sys_ni);
+		ntfsck_set_mft_record_bitmap(sys_ni);
 		ntfsck_update_lcn_bitmap(sys_ni);
 
 		if (mft_num > FILE_Extend) {
