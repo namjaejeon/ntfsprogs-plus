@@ -46,7 +46,8 @@ for TESTCASE_DIR in $TESTCASE_DIRS; do
 
 	# Run fsck for repair
 	$FSCK_PROG $FSCK_OPTS_AUTO "$DEV_FILE"
-	if [ $? -ne 1 ] && [ $? -ne 0 ]; then
+	RET=$?
+	if [ ${RET} -ne 1 ] && [ ${RET} -ne 0 ]; then
 		echo ""
 		echo "Failed to repair ${TESTCASE_DIR}"
 		if [ $NEED_LOOPDEV ]; then
@@ -58,7 +59,8 @@ for TESTCASE_DIR in $TESTCASE_DIRS; do
 	echo ""
 	# Run fsck again
 	$FSCK_PROG_2 $FSCK_OPTS_CHECK "$DEV_FILE"
-	if [ $? -ne 0 ]; then
+	RET=$?
+	if [ ${RET} -ne 0 ]; then
 		echo ""
 		echo "Failed, corrupted ${TESTCASE_DIR}"
 		if [ $NEED_LOOPDEV ]; then
