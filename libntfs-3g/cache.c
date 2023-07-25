@@ -320,7 +320,11 @@ struct CACHED_GENERIC *ntfs_enter_cache(struct CACHE_HEADER *cache,
 			}
 			if (cache->dohash && current)
 				inserthashindex(cache,current);
+		} else {
+			if (cache->dofree)
+				cache->dofree(item);
 		}
+
 		cache->writes++;
 	}
 	return (current);
