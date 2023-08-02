@@ -3536,7 +3536,7 @@ err_continue:
 			ictx = NULL;
 		}
 
-		if (dir_ni->fsck_ibm) {
+		if (dir_ni && dir_ni->fsck_ibm) {
 			free(dir_ni->fsck_ibm);
 			dir_ni->fsck_ibm = NULL;
 		}
