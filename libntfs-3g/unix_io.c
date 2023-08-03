@@ -146,6 +146,11 @@ static int ntfs_device_unix_io_open(struct ntfs_device *dev, int flags)
 			/* if permission error and rw, retry read-only */
 		if ((err == EACCES) && ((flags & O_RDWR) == O_RDWR))
 			err = EROFS;
+
+		if ((err == ENODEV) || (err == ENXIO)) {
+			ntfs_log_perror("Failed open device %s", dev->d_name);
+			exit(8);
+		}
 		goto err_out;
 	}
 #ifdef HAVE_LINUX_FS_H
@@ -223,7 +228,7 @@ static int ntfs_device_unix_io_close(struct ntfs_device *dev)
 		ntfs_log_perror("Could not unlock %s", dev->d_name);
 	if (close(DEV_FD(dev))) {
 		ntfs_log_perror("Failed to close device %s", dev->d_name);
-		return -1;
+		exit(8);
 	}
 	NDevClearOpen(dev);
 	free(dev->d_private);
@@ -260,7 +265,14 @@ static s64 ntfs_device_unix_io_seek(struct ntfs_device *dev, s64 offset,
 static s64 ntfs_device_unix_io_read(struct ntfs_device *dev, void *buf,
 		s64 count)
 {
-	return read(DEV_FD(dev), buf, count);
+	s64 cnt;
+
+	if ((cnt = read(DEV_FD(dev), buf, count)) < 0) {
+		ntfs_log_perror("Failed to read device %s", dev->d_name);
+		exit(8);
+	}
+
+	return cnt;
 }
 
 /**
@@ -276,12 +288,20 @@ static s64 ntfs_device_unix_io_read(struct ntfs_device *dev, void *buf,
 static s64 ntfs_device_unix_io_write(struct ntfs_device *dev, const void *buf,
 		s64 count)
 {
+	s64 cnt;
+
 	if (NDevReadOnly(dev)) {
 		errno = EROFS;
 		return -1;
 	}
 	NDevSetDirty(dev);
-	return write(DEV_FD(dev), buf, count);
+
+	if ((cnt = write(DEV_FD(dev), buf, count)) < 0) {
+		ntfs_log_perror("Failed to write device %s", dev->d_name);
+		exit(8);
+	}
+
+	return cnt;
 }
 
 /**
@@ -298,7 +318,14 @@ static s64 ntfs_device_unix_io_write(struct ntfs_device *dev, const void *buf,
 static s64 ntfs_device_unix_io_pread(struct ntfs_device *dev, void *buf,
 		s64 count, s64 offset)
 {
-	return pread(DEV_FD(dev), buf, count, offset);
+	s64 cnt;
+
+	if ((cnt = pread(DEV_FD(dev), buf, count, offset)) < 0) {
+		ntfs_log_perror("Failed to pread device %s", dev->d_name);
+		exit(8);
+	}
+
+	return cnt;
 }
 
 /**
@@ -315,12 +342,20 @@ static s64 ntfs_device_unix_io_pread(struct ntfs_device *dev, void *buf,
 static s64 ntfs_device_unix_io_pwrite(struct ntfs_device *dev, const void *buf,
 		s64 count, s64 offset)
 {
+	s64 cnt;
+
 	if (NDevReadOnly(dev)) {
 		errno = EROFS;
 		return -1;
 	}
 	NDevSetDirty(dev);
-	return pwrite(DEV_FD(dev), buf, count, offset);
+
+	if ((cnt = pwrite(DEV_FD(dev), buf, count, offset)) < 0) {
+		ntfs_log_perror("Failed to pwrite device %s", dev->d_name);
+		exit(8);
+	}
+
+	return cnt;
 }
 
 /**
