@@ -242,8 +242,9 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 	u32 biu;	/* bytes_in_use */
 	s32 space;
 	BOOL fixed = FALSE;
+	BOOL is_fsck = NVolFsck(vol);
 
-	if (mref <= FILE_MFTMirr)
+	if (is_fsck && mref <= FILE_MFTMirr)
 		NVolClearFsck(vol);
 
 	/* check magic number of mft */
@@ -388,7 +389,7 @@ int ntfs_mft_record_check(ntfs_volume *vol, const MFT_REF mref,
 
 	ret = 0;
 err_out:
-	if (mref <= FILE_MFTMirr)
+	if (is_fsck && mref <= FILE_MFTMirr)
 		NVolSetFsck(vol);
 
 	if (fixed) {
