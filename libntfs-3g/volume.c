@@ -1325,18 +1325,36 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 				"%d). Correcting differences in $MFT%s record",
 				i, use_mirr ? "" : "Mirr");
 		if (ntfsck_ask_repair(vol)) {
-			s64 pos;
-			MFT_RECORD *m;
+			s64 mft_pos, mirr_pos;
+			MFT_RECORD *mwrite;
 
-			pos = ((use_mirr ? vol->mft_lcn : vol->mftmirr_lcn) <<
-				vol->cluster_size_bits) + (i * vol->mft_record_size);
-			m = use_mirr ? mrec2 : mrec;
+			mft_pos = (vol->mft_lcn << vol->cluster_size_bits) +
+				(i * vol->mft_record_size);
+			mirr_pos = (vol->mftmirr_lcn << vol->cluster_size_bits) +
+				(i * vol->mft_record_size);
 
-			if (ntfs_mst_pwrite(vol->dev, pos, 1, vol->mft_record_size, m) != 1) {
-				ntfs_log_perror("Error correcting $MFT%s record : %d",
-						use_mirr ? "" : "Mirr", i);
+			mwrite = ntfs_malloc(vol->mft_record_size);
+			if (!mwrite)
+				goto io_error_exit;
+
+			memcpy(mwrite, use_mirr ? mrec2 : mrec, vol->mft_record_size);
+
+			if (ntfs_mst_pwrite(vol->dev, mft_pos, 1,
+					    vol->mft_record_size, mwrite) != 1) {
+				ntfs_log_perror("Error correcting $MFT record : %d", i);
+				free(mwrite);
 				goto io_error_exit;
 			}
+
+			memcpy(mwrite, use_mirr ? mrec2 : mrec, vol->mft_record_size);
+			if (ntfs_mst_pwrite(vol->dev, mirr_pos, 1,
+					    vol->mft_record_size, mwrite) != 1) {
+				ntfs_log_perror("Error correcting $MFTMirr record : %d", i);
+				free(mwrite);
+				goto io_error_exit;
+			}
+
+			free(mwrite);
 			fsck_err_fixed();
 		} else {
 			goto io_error_exit;
