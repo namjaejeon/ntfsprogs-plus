@@ -3491,8 +3491,9 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 	ATTR_RECORD *mod_a = (ATTR_RECORD *)a;
 	u64 inum;
 	int ret;
+	BOOL is_fsck = NVolFsck(vol);
 
-	if (mref <= FILE_MFTMirr)
+	if (is_fsck && mref <= FILE_MFTMirr)
 		NVolClearFsck(vol);
 
 	/*
@@ -3811,7 +3812,7 @@ int ntfs_attr_inconsistent(ntfs_volume *vol, ATTR_RECORD *a,
 	}
 
 out:
-	if (mref <= FILE_MFTMirr)
+	if (is_fsck && mref <= FILE_MFTMirr)
 		NVolSetFsck(vol);
 	return (ret);
 }

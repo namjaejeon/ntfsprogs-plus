@@ -1234,6 +1234,9 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 	if (!vol)
 		return NULL;
 
+	if (!NVolFsck(vol))
+		goto skip_compare_mft;
+
 	/* Load data from $MFT and $MFTMirr and compare the contents. */
 	m  = ntfs_malloc(vol->mftmirr_size << vol->mft_record_size_bits);
 	m2 = ntfs_malloc(vol->mftmirr_size << vol->mft_record_size_bits);
@@ -1344,6 +1347,7 @@ ntfs_volume *ntfs_device_mount(struct ntfs_device *dev, ntfs_mount_flags flags)
 	free(m);
 	m = m2 = NULL;
 
+skip_compare_mft:
 	/* Now load the bitmap from $Bitmap. */
 	ntfs_log_debug("Loading $Bitmap...\n");
 	vol->lcnbmp_ni = ntfs_inode_open(vol, FILE_Bitmap);
