@@ -2137,6 +2137,7 @@ int ntfs_index_rm(ntfs_index_context *icx)
 {
 	INDEX_HEADER *ih;
 	int err, ret = STATUS_OK;
+	u8 *ie_start, *ie_end;
 
 	ntfs_log_trace("Entering\n");
 	
@@ -2149,6 +2150,17 @@ int ntfs_index_rm(ntfs_index_context *icx)
 		ih = &icx->ir->index;
 	else
 		ih = &icx->ib->index;
+
+	ie_start = (u8 *)ih + le32_to_cpu(ih->entries_offset);
+	ie_end = (u8 *)ih + le32_to_cpu(ih->index_length);
+
+	if (ie_start > (u8 *)icx->entry || ie_end <= (u8 *)icx->entry) {
+		ntfs_log_error("Index entry(0x%p) is out of range from %s\n",
+				(u8 *)icx->entry,
+				icx->is_in_root ? "index root" : "index block");
+		errno = EINVAL;
+		goto err_out;
+	}
 	
 	if (icx->entry->ie_flags & INDEX_ENTRY_NODE) {
 		
