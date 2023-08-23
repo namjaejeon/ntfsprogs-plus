@@ -2792,6 +2792,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 
 	ni = ntfs_inode_open(vol, MREF(mref));
 	if (ni) {
+		BOOL is_mft_checked = FALSE;
+
 		/*
 		 * check base_mft_record before calling utils_is_metadata().
 		 * cause utils_is_metadata() consider extent inode,
@@ -2815,6 +2817,9 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 			 */
 			ret = ntfsck_check_system_inode(ni, ie, ictx);
 		} else {
+			if (ntfsck_mft_bmp_bit_get(ni->mft_no))
+				is_mft_checked = TRUE;
+
 			ret = ntfsck_check_inode(ni, ie, ictx);
 			if (ret) {
 				ntfs_log_error("Failed to check inode(%"PRIu64") "
@@ -2829,7 +2834,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 
 		if ((ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT) &&
-				strcmp(filename, ".")) {
+				strcmp(filename, ".") &&
+				is_mft_checked == FALSE) {
 			dir = (struct dir *)calloc(1, sizeof(struct dir));
 			if (!dir) {
 				ntfs_log_error("Failed to allocate for subdir.\n");
