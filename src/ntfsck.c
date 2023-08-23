@@ -2829,7 +2829,8 @@ static int ntfsck_check_index(ntfs_volume *vol, INDEX_ENTRY *ie,
 		}
 
 		if ((ie_fn->file_attributes & FILE_ATTR_I30_INDEX_PRESENT) &&
-				strcmp(filename, ".")) {
+				strcmp(filename, ".") &&
+				ie->key.file_name.file_name_type != FILE_NAME_DOS) {
 			dir = (struct dir *)calloc(1, sizeof(struct dir));
 			if (!dir) {
 				ntfs_log_error("Failed to allocate for subdir.\n");
