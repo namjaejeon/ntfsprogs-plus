@@ -60,15 +60,15 @@ endif
 # And create ldscript or symbolic link from /usr
 install-exec-hook: install-rootlibLTLIBRARIES
 if INSTALL_LIBRARY
-	if [ ! "$(rootlibdir)" -ef "$(libdir)" ]; then \
+	if [ ! "$(DESTDIR)/$(rootlibdir)" -ef "$(DESTDIR)/$(libdir)" ]; then \
 		$(MV) -f "$(DESTDIR)/$(libdir)"/libntfs-3g.so* "$(DESTDIR)/$(rootlibdir)";  \
 	fi
 if GENERATE_LDSCRIPT
-	if [ ! "$(rootlibdir)" -ef "$(libdir)" ]; then \
+	if [ ! "$(DESTDIR)/$(rootlibdir)" -ef "$(DESTDIR)/$(libdir)" ]; then \
 		$(install_sh_PROGRAM) "libntfs-3g.script.so" "$(DESTDIR)/$(libdir)/libntfs-3g.so"; \
 	fi
 else
-	if [ ! "$(rootlibdir)" -ef "$(libdir)" ]; then \
+	if [ ! "$(DESTDIR)/$(rootlibdir)" -ef "$(DESTDIR)/$(libdir)" ]; then \
 		$(LN_S) "$(rootlibdir)/libntfs-3g.so" "$(DESTDIR)/$(libdir)/libntfs-3g.so"; \
 	fi
 endif
