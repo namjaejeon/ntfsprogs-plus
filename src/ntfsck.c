@@ -3529,7 +3529,7 @@ check_index:
 			ret = ntfsck_check_index(vol, next, ictx);
 			if (ret) {
 				next = ictx->entry;
-				if (ret < 0)
+				if (ret < 0 || !ictx->actx || !next)
 					break;
 				if (!(next->ie_flags & INDEX_ENTRY_END))
 					goto check_index;
@@ -3554,7 +3554,8 @@ err_continue:
 		}
 
 		if (ictx) {
-			ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
+			if (ictx->actx)
+				ntfs_inode_mark_dirty(ictx->actx->ntfs_ino);
 			ntfs_index_ctx_put(ictx);
 			ictx = NULL;
 		}
